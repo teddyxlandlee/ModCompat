@@ -63,7 +63,7 @@ public final class NeoForgeVersions {
      * @throws IllegalArgumentException 版本号为 {@code null} 或空白（{@code null} 不是合法值，这里显式拒绝）
      */
     public static String prefixFor(String mcVersion) {
-        if (mcVersion == null || mcVersion.isBlank()) {
+        if (mcVersion.isBlank()) {
             throw new IllegalArgumentException("Minecraft 版本号为空");
         }
         String[] parts = mcVersion.trim().split("\\.");
@@ -138,7 +138,8 @@ public final class NeoForgeVersions {
             (parse(version) == null ? unknown : known).add(version);
         }
         unknown.sort(NeoForgeVersions::naturalCompare);
-        known.sort(Comparator.comparing(NeoForgeVersions::parse));
+        // NeoForgeVersions.parse() may return null for failures. They should be smaller than "0.0.0".
+        known.sort(Comparator.comparing(NeoForgeVersions::parse, Comparator.nullsFirst(Comparator.naturalOrder())));
         return known.isEmpty() ? unknown.getLast() : known.getLast();
     }
 

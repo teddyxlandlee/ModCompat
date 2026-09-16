@@ -94,7 +94,7 @@ public final class CliParser {
             }
 
             String name = arg;
-            @Nullable String inline = null;
+            String inline = null;
             int eq = arg.indexOf('=');
             if (arg.startsWith("-") && eq > 0) {
                 name = arg.substring(0, eq);

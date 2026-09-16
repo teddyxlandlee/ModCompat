@@ -43,15 +43,15 @@ public final class LibraryParser {
     }
 
     private static Resource parseEntry(JsonObject entry, int index) {
-        @Nullable String coords = entry.getString("name");
+        String coords = entry.getString("name");
         if (coords == null || coords.isBlank()) {
             throw new ModCompatException("libraries[" + index + "] 缺少 name（Maven 坐标）");
         }
         coords = coords.trim();
 
-        @Nullable String url = artifactUrl(entry);
+        String url = artifactUrl(entry);
         if (url == null) {
-            @Nullable String repository = entry.getString("url");
+            String repository = entry.getString("url");
             if (repository != null && !repository.isBlank()) {
                 url = MavenCoords.artifactUrl(repository, MavenCoords.parse(coords));
             }

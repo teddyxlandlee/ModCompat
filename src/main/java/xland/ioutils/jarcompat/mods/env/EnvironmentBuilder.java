@@ -57,7 +57,7 @@ public final class EnvironmentBuilder {
             resources.add(mojang.clientJar(mcVersion, versionMeta));
             resources.addAll(mojang.libraries(versionMeta));
 
-            @Nullable String fabricVersion = null;
+            String fabricVersion = null;
             if (withFabric) {
                 fabricVersion = fabricOverride != null && !fabricOverride.isBlank()
                         ? fabricOverride
@@ -65,7 +65,7 @@ public final class EnvironmentBuilder {
                 resources.addAll(fabric.libraries(mcVersion, fabricVersion));
             }
 
-            @Nullable String neoVersion = null;
+            String neoVersion = null;
             if (withNeoForge) {
                 neoVersion = neoForgeOverride != null && !neoForgeOverride.isBlank()
                         ? neoForgeOverride

@@ -38,7 +38,7 @@ public record MavenCoords(String group, String artifact, String version,
                 classifier = null;
             }
         }
-        extension = extension == null || extension.isBlank()
+        extension = extension.isBlank()
                 ? DEFAULT_EXTENSION
                 : extension.trim().toLowerCase(Locale.ROOT);
     }
@@ -57,7 +57,7 @@ public record MavenCoords(String group, String artifact, String version,
             throw new IllegalArgumentException("Maven 坐标为空");
         }
 
-        @Nullable String extension = null;
+        String extension = null;
         int at = text.lastIndexOf('@');
         if (at >= 0) {
             extension = text.substring(at + 1).trim();
@@ -74,8 +74,8 @@ public record MavenCoords(String group, String artifact, String version,
         if (parts.length > 4) {
             throw new IllegalArgumentException("Maven 坐标最多支持 group:artifact:version:classifier 四段: " + coords);
         }
-        @Nullable String classifier = parts.length == 4 ? parts[3] : null;
-        return new MavenCoords(parts[0], parts[1], parts[2], classifier, extension);
+        String classifier = parts.length == 4 ? parts[3] : null;
+        return new MavenCoords(parts[0], parts[1], parts[2], classifier, Objects.requireNonNullElse(extension, DEFAULT_EXTENSION));
     }
 
     /**

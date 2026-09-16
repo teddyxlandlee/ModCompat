@@ -6,7 +6,6 @@ import java.util.Objects;
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
 
-import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.mods.core.LibraryParser;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
@@ -45,7 +44,7 @@ public final class MojangMeta {
      */
     public JsonObject versionMeta(String mcVersion) {
         JsonObject manifest = client.object(VERSION_MANIFEST_URL);
-        @Nullable JsonArray versions = manifest.getArray("versions");
+        JsonArray versions = manifest.getArray("versions");
         if (versions == null) {
             throw new ModCompatException("版本清单 " + VERSION_MANIFEST_URL + " 缺少 versions 数组");
         }
@@ -56,7 +55,7 @@ public final class MojangMeta {
             if (!mcVersion.equals(entry.getString("id"))) {
                 continue;
             }
-            @Nullable String url = entry.getString("url");
+            String url = entry.getString("url");
             if (url == null || url.isBlank()) {
                 throw new ModCompatException("Minecraft " + mcVersion + " 的清单条目缺少 url");
             }
@@ -68,9 +67,9 @@ public final class MojangMeta {
 
     /** 原版 client JAR，坐标为 {@code com.mojang:minecraft:<mcVersion>}。 */
     public Resource clientJar(String mcVersion, JsonObject versionMeta) {
-        @Nullable JsonObject downloads = versionMeta.getObject("downloads");
-        @Nullable JsonObject client = downloads == null ? null : downloads.getObject("client");
-        @Nullable String url = client == null ? null : client.getString("url");
+        JsonObject downloads = versionMeta.getObject("downloads");
+        JsonObject client = downloads == null ? null : downloads.getObject("client");
+        String url = client == null ? null : client.getString("url");
         if (url == null || url.isBlank()) {
             throw new ModCompatException("Minecraft " + mcVersion + " 的版本元数据缺少 downloads.client.url");
         }

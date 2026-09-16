@@ -8,7 +8,6 @@ import java.util.Objects;
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
 
-import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.mods.core.LibraryParser;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
@@ -42,9 +41,9 @@ public final class FabricMeta {
         if (loaders.isEmpty()) {
             throw new ModCompatException("Fabric 没有为 Minecraft " + mcVersion + " 提供 Loader 版本（" + url + "）");
         }
-        @Nullable JsonObject first = loaders.getObject(0);
-        @Nullable JsonObject loader = first == null ? null : first.getObject("loader");
-        @Nullable String version = loader == null ? null : loader.getString("version");
+        JsonObject first = loaders.getObject(0);
+        JsonObject loader = first == null ? null : first.getObject("loader");
+        String version = loader == null ? null : loader.getString("version");
         if (version == null || version.isBlank()) {
             throw new ModCompatException("Fabric Loader 元数据格式异常（" + url + "）：缺少 loaders[0].loader.version");
         }
