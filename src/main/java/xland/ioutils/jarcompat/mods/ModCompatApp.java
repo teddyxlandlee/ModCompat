@@ -14,6 +14,7 @@ import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonParserException;
 import com.grack.nanojson.JsonWriter;
 
+import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.api.CheckReport;
 import xland.ioutils.jarcompat.api.CheckRequest;
 import xland.ioutils.jarcompat.api.JarCompat;
@@ -57,7 +58,7 @@ public final class ModCompatApp {
      * {@code Implementation-Version}，而 shadow 打包后的 fat JAR 会丢掉这个属性，
      * 于是会退化成 {@code 0.1.0}，显示出来的版本就不对了。</p>
      */
-    public static final String JAR_COMPAT_VERSION = "0.1.4";
+    public static final String JAR_COMPAT_VERSION = "0.1.5";
 
     private final CliOptions options;
     private final Fetcher fetcher;
@@ -88,7 +89,7 @@ public final class ModCompatApp {
         return implRun(args, fetcher, out, err);
     }
 
-    private static int implRun(String[] args, /*@Nullable*/ Fetcher fetcher, PrintStream out, PrintStream err) {
+    private static int implRun(String[] args, @Nullable Fetcher fetcher, PrintStream out, PrintStream err) {
         CliOptions options;
         try {
             options = CliParser.parse(args);
