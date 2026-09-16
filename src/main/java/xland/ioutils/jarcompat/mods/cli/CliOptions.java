@@ -1,16 +1,21 @@
 package xland.ioutils.jarcompat.mods.cli;
 
 import java.nio.file.Path;
+import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.api.ReachabilityScope;
 import xland.ioutils.jarcompat.api.ReportFormat;
 
 /**
  * 解析后的命令行选项。
  *
+ * <p>本记录位于 {@code @NullMarked} 包内：只有显式标注 {@link Nullable} 的分量才可能为
+ * {@code null}（未指定的可选选项，以及 {@code --help}/{@code --version} 快速路径下未填充的必填项）。</p>
+ *
  * @param program          必填，待比较的 Minecraft mod JAR
- * @param mcVersionA       环境 A 的 Minecraft 版本
- * @param mcVersionB       环境 B 的 Minecraft 版本
+ * @param mcVersionA       环境 A 的 Minecraft 版本；{@code --help}/{@code --version} 快速路径下为 {@code null}
+ * @param mcVersionB       环境 B 的 Minecraft 版本；{@code --help}/{@code --version} 快速路径下为 {@code null}
  * @param fabric           是否在环境构建中加入 Fabric Loader 库
  * @param neoForge         是否在环境构建中加入 NeoForge 库
  * @param fabricOverrideA  环境 A 的 Fabric Loader 版本覆盖（可为 {@code null}）
@@ -24,30 +29,38 @@ import xland.ioutils.jarcompat.api.ReportFormat;
  * @param dryRun           只构建并打印 lib-a/lib-b，不下载、不比较
  * @param reachability     可达性策略；mod 通常没有 Main-Class，默认 {@link ReachabilityScope#ALL}
  * @param entryClass       显式入口类（可为 {@code null}）
- * @param entryMethod      入口方法名，默认 {@code main}
+ * @param entryMethod      入口方法名，默认 {@code main}；{@code --help}/{@code --version} 快速路径下为 {@code null}
  * @param help             是否请求帮助
  * @param version          是否请求版本号
  */
 public record CliOptions(
         Path program,
-        String mcVersionA,
-        String mcVersionB,
+        @Nullable String mcVersionA,
+        @Nullable String mcVersionB,
         boolean fabric,
         boolean neoForge,
-        String fabricOverrideA,
-        String fabricOverrideB,
-        String neoForgeOverrideA,
-        String neoForgeOverrideB,
+        @Nullable String fabricOverrideA,
+        @Nullable String fabricOverrideB,
+        @Nullable String neoForgeOverrideA,
+        @Nullable String neoForgeOverrideB,
         Path cacheDir,
         ReportFormat format,
-        Path output,
+        @Nullable Path output,
         boolean failOnError,
         boolean dryRun,
         ReachabilityScope reachability,
-        String entryClass,
-        String entryMethod,
+        @Nullable String entryClass,
+        @Nullable String entryMethod,
         boolean help,
         boolean version) {
+
+    /** 非空分量的尽早校验：这些值一旦为 {@code null}，会在很远的地方才炸开。 */
+    public CliOptions {
+        Objects.requireNonNull(program, "program");
+        Objects.requireNonNull(cacheDir, "cacheDir");
+        Objects.requireNonNull(format, "format");
+        Objects.requireNonNull(reachability, "reachability");
+    }
 
     /** 默认缓存目录：{@code $MODCOMPAT_CACHE_DIR} → {@code $XDG_CACHE_HOME/modcompat} → {@code ~/.cache/modcompat}。 */
     public static Path defaultCacheDir() {

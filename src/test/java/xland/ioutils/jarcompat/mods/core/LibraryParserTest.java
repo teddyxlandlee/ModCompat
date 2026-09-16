@@ -13,9 +13,12 @@ import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonParserException;
 
+import org.jspecify.annotations.Nullable;
+
 class LibraryParserTest {
 
-    private static JsonArray libraries(String json) throws JsonParserException {
+    /** nanojson 的 {@code getArray} 在键不存在时返回 {@code null}；{@code parseLibraries} 正好接受 null。 */
+    private static @Nullable JsonArray libraries(String json) throws JsonParserException {
         return JsonParser.object().from(json).getArray("libraries");
     }
 

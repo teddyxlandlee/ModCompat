@@ -66,10 +66,10 @@ public final class ModCompatApp {
     private final PrintStream err;
 
     public ModCompatApp(CliOptions options, Fetcher fetcher, PrintStream out, PrintStream err) {
-        this.options = options;
-        this.fetcher = fetcher;
-        this.out = out;
-        this.err = err;
+        this.options = Objects.requireNonNull(options, "options");
+        this.fetcher = Objects.requireNonNull(fetcher, "fetcher");
+        this.out = Objects.requireNonNull(out, "out");
+        this.err = Objects.requireNonNull(err, "err");
     }
 
     /**
@@ -90,6 +90,8 @@ public final class ModCompatApp {
     }
 
     private static int implRun(String[] args, @Nullable Fetcher fetcher, PrintStream out, PrintStream err) {
+        Objects.requireNonNull(out, "out");
+        Objects.requireNonNull(err, "err");
         CliOptions options;
         try {
             options = CliParser.parse(args);
@@ -130,13 +132,20 @@ public final class ModCompatApp {
             return ExitCodes.USAGE;
         }
 
+        // execute() 只会在 implRun 处理完 --help/--version 之后被调用，因此下列字段必定有值
+        // （CliOptions 把它们建模为 @Nullable，是因为 help/version 快速路径不会填充它们）。
+        // JarCompat 的 CheckRequest.Builder#entryMethod(String) 也是非空契约，这里尽早失败。
+        String mcVersionA = Objects.requireNonNull(options.mcVersionA(), "mcVersionA");
+        String mcVersionB = Objects.requireNonNull(options.mcVersionB(), "mcVersionB");
+        String entryMethod = Objects.requireNonNull(options.entryMethod(), "entryMethod");
+
         try {
             MetaClient client = new MetaClient(fetcher);
             EnvironmentBuilder builder = new EnvironmentBuilder(client);
 
-            BuiltEnvironment environmentA = builder.build("A", options.mcVersionA(), options.fabric(),
+            BuiltEnvironment environmentA = builder.build("A", mcVersionA, options.fabric(),
                     options.neoForge(), options.fabricOverrideA(), options.neoForgeOverrideA());
-            BuiltEnvironment environmentB = builder.build("B", options.mcVersionB(), options.fabric(),
+            BuiltEnvironment environmentB = builder.build("B", mcVersionB, options.fabric(),
                     options.neoForge(), options.fabricOverrideB(), options.neoForgeOverrideB());
 
             if (environmentA.versions().sameEnvironmentAs(environmentB.versions(), options.fabric(), options.neoForge())) {
@@ -181,7 +190,7 @@ public final class ModCompatApp {
             err.println("资源就绪: 新下载 " + cache.downloadedCount() + " 个，复用缓存 "
                     + cache.reusedCount() + " 个（缓存目录 " + cache.root() + "）");
 
-            CheckReport report = check(program, libAPaths, libBPaths);
+            CheckReport report = check(program, libAPaths, libBPaths, entryMethod);
             emit(report, environmentA, environmentB, libA, libB);
             if (report.errorCount() > 0 && options.failOnError()) {
                 return ExitCodes.INCOMPATIBLE;
@@ -203,13 +212,13 @@ public final class ModCompatApp {
     }
 
     /** 调用 JarCompat 公共 API 完成比较。 */
-    private CheckReport check(Path program, List<Path> libA, List<Path> libB) {
+    private CheckReport check(Path program, List<Path> libA, List<Path> libB, String entryMethod) {
         CheckRequest.Builder request = JarCompat.request()
                 .program(program)
                 .libA(libA.toArray(Path[]::new))
                 .libB(libB.toArray(Path[]::new))
                 .reachability(options.reachability())
-                .entryMethod(options.entryMethod());
+                .entryMethod(entryMethod);
         if (options.entryClass() != null) {
             request.entry(options.entryClass());
         }

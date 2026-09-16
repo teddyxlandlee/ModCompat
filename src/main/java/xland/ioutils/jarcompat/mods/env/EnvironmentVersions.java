@@ -2,10 +2,18 @@ package xland.ioutils.jarcompat.mods.env;
 
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * 一侧环境的版本组合：Minecraft 版本 + 实际启用的 loader 版本（未启用的为 {@code null}）。
+ *
+ * @param minecraftVersion     Minecraft 版本，必填
+ * @param fabricLoaderVersion  启用的 Fabric Loader 版本，未启用时为 {@code null}
+ * @param neoForgeVersion      启用的 NeoForge 版本，未启用时为 {@code null}
  */
-public record EnvironmentVersions(String minecraftVersion, String fabricLoaderVersion, String neoForgeVersion) {
+public record EnvironmentVersions(String minecraftVersion,
+                                  @Nullable String fabricLoaderVersion,
+                                  @Nullable String neoForgeVersion) {
 
     public EnvironmentVersions {
         Objects.requireNonNull(minecraftVersion, "minecraftVersion");
@@ -16,10 +24,11 @@ public record EnvironmentVersions(String minecraftVersion, String fabricLoaderVe
      *
      * <p>DEV_GUIDE §1：未启用的 loader 版本不参与“完全相同”判断；若完全相同则比较无意义。</p>
      *
+     * @param other           另一侧环境；{@code null} 视为不同
      * @param fabricEnabled  本次是否启用 {@code --fabric}
      * @param neoForgeEnabled 本次是否启用 {@code --neoforge}
      */
-    public boolean sameEnvironmentAs(EnvironmentVersions other, boolean fabricEnabled, boolean neoForgeEnabled) {
+    public boolean sameEnvironmentAs(@Nullable EnvironmentVersions other, boolean fabricEnabled, boolean neoForgeEnabled) {
         if (other == null || !minecraftVersion.equals(other.minecraftVersion)) {
             return false;
         }

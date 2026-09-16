@@ -11,6 +11,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * JAR 下载缓存：把 {@link Resource} 落到本地文件，供 {@code JarCompat.check(...)} 以 {@code Path} 读取。
  *
@@ -22,7 +24,7 @@ public final class JarCache {
 
     private final Path root;
     private final Fetcher fetcher;
-    private final Consumer<String> progress;
+    private final @Nullable Consumer<String> progress;
     private int downloaded;
     private int reused;
 
@@ -31,7 +33,7 @@ public final class JarCache {
      * @param fetcher  下载器
      * @param progress 进度回调（每个真正发生的下载调用一次），可为 {@code null}
      */
-    public JarCache(Path root, Fetcher fetcher, Consumer<String> progress) {
+    public JarCache(Path root, Fetcher fetcher, @Nullable Consumer<String> progress) {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath();
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher");
         this.progress = progress;
@@ -67,7 +69,7 @@ public final class JarCache {
             progress.accept("下载 " + target.getFileName() + "  <- " + resource.coords());
         }
         byte[] content = fetcher.get(resource.url());
-        if (content == null || content.length == 0) {
+        if (content.length == 0) {  // implicit null check
             throw new IOException("下载内容为空: " + resource.url());
         }
         Path temp = target.resolveSibling(target.getFileName() + ".part");
@@ -83,6 +85,7 @@ public final class JarCache {
 
     /** 资源在缓存中的目标路径（不触发下载）。 */
     public Path localPath(Resource resource) {
+        Objects.requireNonNull(resource, "resource");
         return root.resolve(sha1Hex(resource.url())).resolve(fileName(resource.url()));
     }
 

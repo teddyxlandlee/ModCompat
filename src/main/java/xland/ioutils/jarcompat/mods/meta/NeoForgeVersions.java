@@ -3,9 +3,11 @@ package xland.ioutils.jarcompat.mods.meta;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
 
 /**
@@ -58,6 +60,7 @@ public final class NeoForgeVersions {
      * 计算 Minecraft 版本对应的 NeoForge 版本前缀。
      *
      * @param mcVersion Minecraft 版本号，例如 {@code 1.21.1}、{@code 26.1}
+     * @throws IllegalArgumentException 版本号为 {@code null} 或空白（{@code null} 不是合法值，这里显式拒绝）
      */
     public static String prefixFor(String mcVersion) {
         if (mcVersion == null || mcVersion.isBlank()) {
@@ -78,9 +81,10 @@ public final class NeoForgeVersions {
     /**
      * 按 {@code ^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta))?$} 解析版本号。
      *
-     * @return 解析结果；无法识别时返回 {@code null}
+     * @param version 版本号，可为 {@code null}
+     * @return 解析结果；入参为 {@code null} 或无法识别时返回 {@code null}
      */
-    public static Version parse(String version) {
+    public static @Nullable Version parse(@Nullable String version) {
         if (version == null) {
             return null;
         }
@@ -99,8 +103,12 @@ public final class NeoForgeVersions {
 
     /**
      * 过滤出属于某个 Minecraft 版本的候选 NeoForge 版本（{@code v.startsWith(prefix + ".")}）。
+     *
+     * @param versions  版本列表本身必须非空；列表中的 {@code null} 元素会被跳过
+     * @param mcVersion Minecraft 版本号
      */
-    public static List<String> candidates(List<String> versions, String mcVersion) {
+    public static List<String> candidates(List<@Nullable String> versions, String mcVersion) {
+        Objects.requireNonNull(versions, "versions");
         String prefix = prefixFor(mcVersion) + ".";
         List<String> result = new ArrayList<>();
         for (String version : versions) {
@@ -117,9 +125,10 @@ public final class NeoForgeVersions {
      * <p>可识别版本按数字部分升序排在后面，无法识别的版本排在前面（组内按自然序），因此优先返回
      * 一个格式规范的最新版本；若所有候选都无法识别，则返回自然序最大的那个。</p>
      *
+     * @param versions 候选版本；{@code null} 或空列表都视为“没有候选”
      * @throws ModCompatException 候选为空
      */
-    public static String pickLatest(List<String> versions) {
+    public static String pickLatest(@Nullable List<String> versions) {
         if (versions == null || versions.isEmpty()) {
             throw new ModCompatException("没有任何候选 NeoForge 版本可供选择");
         }
@@ -138,6 +147,8 @@ public final class NeoForgeVersions {
      * 其余按字符比较，结果稳定且可重复。
      */
     public static int naturalCompare(String a, String b) {
+        Objects.requireNonNull(a, "a");
+        Objects.requireNonNull(b, "b");
         int i = 0;
         int j = 0;
         while (i < a.length() && j < b.length()) {

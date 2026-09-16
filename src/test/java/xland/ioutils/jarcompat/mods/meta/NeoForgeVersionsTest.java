@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,9 @@ class NeoForgeVersionsTest {
         assertEquals(new NeoForgeVersions.Version(21, 1, 250), NeoForgeVersions.parse("21.1.250"));
         assertEquals(new NeoForgeVersions.Version(21, 0, 3), NeoForgeVersions.parse("21.0.3-beta"));
         assertEquals(new NeoForgeVersions.Version(26, 1, 0), NeoForgeVersions.parse("26.1.0-alpha"));
-        assertEquals(0, NeoForgeVersions.parse("21.1.250").compareTo(NeoForgeVersions.parse("21.1.250-beta")));
+        NeoForgeVersions.Version release = Objects.requireNonNull(NeoForgeVersions.parse("21.1.250"));
+        NeoForgeVersions.Version beta = Objects.requireNonNull(NeoForgeVersions.parse("21.1.250-beta"));
+        assertEquals(0, release.compareTo(beta));
     }
 
     @Test

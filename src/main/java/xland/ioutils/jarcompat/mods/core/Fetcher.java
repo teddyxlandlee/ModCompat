@@ -11,7 +11,12 @@ import java.io.IOException;
 @FunctionalInterface
 public interface Fetcher extends Closeable {
 
-    /** 取回 {@code url} 的响应体。 */
+    /**
+     * 取回 {@code url} 的响应体。
+     *
+     * <p>本包是 {@code @NullMarked}，因此实现应当返回非空数组；调用方仍会把 {@code null}
+     * 视为“获取失败”而不是合法结果（实现可能来自外部）。</p>
+     */
     byte[] get(String url) throws IOException;
 
     @Override

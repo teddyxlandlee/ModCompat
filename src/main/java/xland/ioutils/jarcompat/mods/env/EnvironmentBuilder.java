@@ -2,9 +2,11 @@ package xland.ioutils.jarcompat.mods.env;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import com.grack.nanojson.JsonObject;
 
+import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
 import xland.ioutils.jarcompat.mods.core.Resource;
@@ -31,7 +33,7 @@ public final class EnvironmentBuilder {
     private final NeoForgeMeta neoForge;
 
     public EnvironmentBuilder(MetaClient client) {
-        this.client = client;
+        this.client = Objects.requireNonNull(client, "client");
         this.mojang = new MojangMeta(client);
         this.fabric = new FabricMeta(client);
         this.neoForge = new NeoForgeMeta(client);
@@ -48,14 +50,14 @@ public final class EnvironmentBuilder {
      * @param neoForgeOverride 指定的 NeoForge 版本，可为 {@code null}
      */
     public BuiltEnvironment build(String label, String mcVersion, boolean withFabric, boolean withNeoForge,
-                                  String fabricOverride, String neoForgeOverride) {
+                                  @Nullable String fabricOverride, @Nullable String neoForgeOverride) {
         try {
             JsonObject versionMeta = mojang.versionMeta(mcVersion);
             List<Resource> resources = new ArrayList<>();
             resources.add(mojang.clientJar(mcVersion, versionMeta));
             resources.addAll(mojang.libraries(versionMeta));
 
-            String fabricVersion = null;
+            @Nullable String fabricVersion = null;
             if (withFabric) {
                 fabricVersion = fabricOverride != null && !fabricOverride.isBlank()
                         ? fabricOverride
@@ -63,7 +65,7 @@ public final class EnvironmentBuilder {
                 resources.addAll(fabric.libraries(mcVersion, fabricVersion));
             }
 
-            String neoVersion = null;
+            @Nullable String neoVersion = null;
             if (withNeoForge) {
                 neoVersion = neoForgeOverride != null && !neoForgeOverride.isBlank()
                         ? neoForgeOverride

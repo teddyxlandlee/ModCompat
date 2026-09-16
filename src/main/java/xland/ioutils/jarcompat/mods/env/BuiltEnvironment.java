@@ -1,6 +1,7 @@
 package xland.ioutils.jarcompat.mods.env;
 
 import java.util.List;
+import java.util.Objects;
 
 import xland.ioutils.jarcompat.mods.core.Resource;
 
@@ -13,6 +14,7 @@ import xland.ioutils.jarcompat.mods.core.Resource;
 public record BuiltEnvironment(EnvironmentVersions versions, List<Resource> resources) {
 
     public BuiltEnvironment {
+        Objects.requireNonNull(versions, "versions");
         resources = List.copyOf(resources);
     }
 }

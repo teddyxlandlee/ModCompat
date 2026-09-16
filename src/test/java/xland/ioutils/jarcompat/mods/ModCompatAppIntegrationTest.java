@@ -31,8 +31,10 @@ import com.grack.nanojson.JsonObject;
 import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonWriter;
 
+import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.mods.cli.ExitCodes;
 import xland.ioutils.jarcompat.mods.core.Fetcher;
+import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.meta.FabricMeta;
 import xland.ioutils.jarcompat.mods.meta.MojangMeta;
 import xland.ioutils.jarcompat.mods.meta.NeoForgeMeta;
@@ -84,8 +86,8 @@ class ModCompatAppIntegrationTest {
         return new Run(exit, outBuffer.toString(UTF_8), errBuffer.toString(UTF_8));
     }
 
-    /** 编译一个类并打成 JAR。 */
-    private Path compileJar(String name, String dottedClass, String source, Path classpath) throws IOException {
+    /** 编译一个类并打成 JAR。{@code classpath} 为 {@code null} 时不传 {@code -classpath}。 */
+    private Path compileJar(String name, String dottedClass, String source, @Nullable Path classpath) throws IOException {
         Path sourceFile = work.resolve(name + "/src").resolve(dottedClass.replace('.', '/') + ".java");
         Files.createDirectories(sourceFile.getParent());
         Files.writeString(sourceFile, source);
@@ -204,8 +206,17 @@ class ModCompatAppIntegrationTest {
         return FabricMeta.LOADER_META_BASE + mcVersion + "/" + loaderVersion + "/profile/json";
     }
 
+    /**
+     * NeoForge installer 的下载地址。
+     *
+     * <p>{@code installerUrl} 只按 Maven 规则拼 URL、不会用到 {@link MetaClient}；
+     * 这里给一个一旦被调用就失败的替身，避免为了拿 URL 而构造出 {@code null} 客户端。</p>
+     */
     private static String installerUrl(String neoVersion) {
-        return new NeoForgeMeta(null).installerUrl(neoVersion);
+        MetaClient unused = new MetaClient(url -> {
+            throw new IOException("测试不应发起网络请求: " + url);
+        });
+        return new NeoForgeMeta(unused).installerUrl(neoVersion);
     }
 
     // ------------------------------------------------------------------ 测试用例

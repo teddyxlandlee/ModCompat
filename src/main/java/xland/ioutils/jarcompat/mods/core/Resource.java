@@ -2,6 +2,8 @@ package xland.ioutils.jarcompat.mods.core;
 
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * 一个上游资源：Maven 坐标 + 下载地址。
  *
@@ -27,8 +29,10 @@ public record Resource(String url, String coords) {
 
     /**
      * DEV_GUIDE 中的 {@code isEquivalent}：两个资源的 Maven 坐标 {@code coords} 相同。
+     *
+     * @param other 另一个资源；{@code null} 视为“不等价”
      */
-    public boolean equivalentTo(Resource other) {
+    public boolean equivalentTo(@Nullable Resource other) {
         return other != null && coords.equals(other.coords);
     }
 

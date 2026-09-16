@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -26,6 +27,8 @@ public final class Zips {
      * @throws ModCompatException 条目不存在或 ZIP 损坏
      */
     public static byte[] readEntry(byte[] archive, String entryName) {
+        Objects.requireNonNull(archive, "archive");
+        Objects.requireNonNull(entryName, "entryName");
         String wanted = entryName.startsWith("/") ? entryName.substring(1) : entryName;
         try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(archive))) {
             ZipEntry entry;
@@ -46,6 +49,7 @@ public final class Zips {
 
     /** 文件是否是当前可读的 ZIP/JAR。 */
     public static boolean isReadableZip(Path file) {
+        Objects.requireNonNull(file, "file");
         if (!Files.isRegularFile(file)) {
             return false;
         }

@@ -3,6 +3,7 @@ package xland.ioutils.jarcompat.mods.meta;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
@@ -38,7 +39,7 @@ public final class NeoForgeMeta {
     private final MetaClient client;
 
     public NeoForgeMeta(MetaClient client) {
-        this.client = client;
+        this.client = Objects.requireNonNull(client, "client");
     }
 
     /**

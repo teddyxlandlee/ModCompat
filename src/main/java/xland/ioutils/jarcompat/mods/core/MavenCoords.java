@@ -3,6 +3,8 @@ package xland.ioutils.jarcompat.mods.core;
 import java.util.Locale;
 import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Maven 坐标 {@code group:artifact:version[:classifier][@extension]} 的解析与仓库 URL 拼接。
  *
@@ -17,8 +19,11 @@ import java.util.Objects;
  *   <li>{@code group:artifact:version@extension}</li>
  *   <li>{@code group:artifact:version:classifier@extension}</li>
  * </ul>
+ * @param classifier  可选的 classifier（未指定时为 {@code null}）
+ * @param extension   扩展名，未指定时为 {@link #DEFAULT_EXTENSION}
  */
-public record MavenCoords(String group, String artifact, String version, String classifier, String extension) {
+public record MavenCoords(String group, String artifact, String version,
+                          @Nullable String classifier, String extension) {
 
     /** 未指定 {@code @extension} 时使用的默认扩展名。 */
     public static final String DEFAULT_EXTENSION = "jar";
@@ -52,7 +57,7 @@ public record MavenCoords(String group, String artifact, String version, String 
             throw new IllegalArgumentException("Maven 坐标为空");
         }
 
-        String extension = null;
+        @Nullable String extension = null;
         int at = text.lastIndexOf('@');
         if (at >= 0) {
             extension = text.substring(at + 1).trim();
@@ -69,7 +74,7 @@ public record MavenCoords(String group, String artifact, String version, String 
         if (parts.length > 4) {
             throw new IllegalArgumentException("Maven 坐标最多支持 group:artifact:version:classifier 四段: " + coords);
         }
-        String classifier = parts.length == 4 ? parts[3] : null;
+        @Nullable String classifier = parts.length == 4 ? parts[3] : null;
         return new MavenCoords(parts[0], parts[1], parts[2], classifier, extension);
     }
 
@@ -119,7 +124,8 @@ public record MavenCoords(String group, String artifact, String version, String 
         return sb.toString();
     }
 
-    private static String requirePart(String value, String name) {
+    /** 校验并规范化必填段；{@code null} 不是合法值，转成带说明的 {@link IllegalArgumentException}。 */
+    private static String requirePart(@Nullable String value, String name) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("Maven 坐标的 " + name + " 为空");
         }

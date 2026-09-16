@@ -6,6 +6,8 @@ import java.util.List;
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * 把 Mojang / Fabric / NeoForge 元数据中的 {@code libraries} 数组解析成 {@link Resource} 列表。
  *
@@ -25,7 +27,7 @@ public final class LibraryParser {
     }
 
     /** 解析 {@code libraries} 数组；{@code null} 视为空数组。 */
-    public static List<Resource> parseLibraries(JsonArray libraries) {
+    public static List<Resource> parseLibraries(@Nullable JsonArray libraries) {
         List<Resource> result = new ArrayList<>();
         if (libraries == null) {
             return List.of();
@@ -41,15 +43,15 @@ public final class LibraryParser {
     }
 
     private static Resource parseEntry(JsonObject entry, int index) {
-        String coords = entry.getString("name");
+        @Nullable String coords = entry.getString("name");
         if (coords == null || coords.isBlank()) {
             throw new ModCompatException("libraries[" + index + "] 缺少 name（Maven 坐标）");
         }
         coords = coords.trim();
 
-        String url = artifactUrl(entry);
+        @Nullable String url = artifactUrl(entry);
         if (url == null) {
-            String repository = entry.getString("url");
+            @Nullable String repository = entry.getString("url");
             if (repository != null && !repository.isBlank()) {
                 url = MavenCoords.artifactUrl(repository, MavenCoords.parse(coords));
             }
@@ -62,7 +64,7 @@ public final class LibraryParser {
     }
 
     /** 读取 {@code downloads.artifact.url}，不存在或类型不对时返回 {@code null}。 */
-    private static String artifactUrl(JsonObject entry) {
+    private static @Nullable String artifactUrl(JsonObject entry) {
         JsonObject downloads = entry.getObject("downloads");
         if (downloads == null) {
             return null;

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import xland.ioutils.jarcompat.mods.core.Resource;
@@ -49,6 +50,8 @@ public final class EnvironmentFilter {
      * @param otherSideCoords 另一侧未过滤资源的全部 Maven 坐标
      */
     public static Result filter(List<Resource> ownResources, Set<String> otherSideCoords) {
+        Objects.requireNonNull(ownResources, "ownResources");
+        Objects.requireNonNull(otherSideCoords, "otherSideCoords");
         Set<String> seen = new HashSet<>();
         List<Resource> kept = new ArrayList<>(ownResources.size());
         int shared = 0;
@@ -69,6 +72,7 @@ public final class EnvironmentFilter {
 
     /** 提取资源列表的全部 Maven 坐标（保持顺序、去重）。 */
     public static Set<String> coordsOf(List<Resource> resources) {
+        Objects.requireNonNull(resources, "resources");
         Set<String> coords = new LinkedHashSet<>();
         for (Resource resource : resources) {
             coords.add(resource.coords());

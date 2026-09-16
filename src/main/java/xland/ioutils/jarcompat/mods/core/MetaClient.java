@@ -30,6 +30,8 @@ public final class MetaClient {
 
     /** 取回原始字节（带缓存）。 */
     public byte[] bytes(String url) {
+        Objects.requireNonNull(url, "url");
+        // 注意：这里可能为 null 的是“数组本身”，所以 @Nullable 写在方括号前
         byte[] cached = bytes.get(url);
         if (cached != null) {
             return cached;
@@ -40,14 +42,17 @@ public final class MetaClient {
         } catch (IOException e) {
             throw new ModCompatException("无法获取 " + url + ": " + e.getMessage(), e);
         }
-        if (fetched == null) {
-            throw new ModCompatException("无法获取 " + url + ": 响应为空");
-        }
+        Objects.requireNonNull(fetched);    // disobey of nullness contract
         bytes.put(url, fetched);
         return fetched;
     }
 
-    /** 把 {@code url} 的响应解析为 JSON 对象。 */
+    /**
+     * 把 {@code url} 的响应解析为 JSON 对象。
+     *
+     * <p>nanojson 未做 nullness 标注，但其 {@code from(...)} 在解析失败时抛
+     * {@link JsonParserException}、不会返回 {@code null}，因此这里可以安全地按非空返回。</p>
+     */
     public JsonObject object(String url) {
         return objects.computeIfAbsent(url, u -> {
             String text = new String(bytes(u), StandardCharsets.UTF_8);
@@ -73,6 +78,8 @@ public final class MetaClient {
 
     /** 把一段 JSON 文本解析为 JSON 对象。 */
     public static JsonObject parseObject(String text, String description) {
+        Objects.requireNonNull(text, "text");
+        Objects.requireNonNull(description, "description");
         try {
             return JsonParser.object().from(text);
         } catch (JsonParserException e) {

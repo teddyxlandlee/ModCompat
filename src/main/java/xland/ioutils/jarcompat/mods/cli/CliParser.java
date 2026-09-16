@@ -4,7 +4,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
+import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.api.ReachabilityScope;
 import xland.ioutils.jarcompat.api.ReportFormat;
 
@@ -74,6 +76,7 @@ public final class CliParser {
 
     /** 解析命令行。 */
     public static CliOptions parse(String[] args) {
+        Objects.requireNonNull(args, "args");
         Builder b = new Builder();
         List<String> positionals = new ArrayList<>();
         Args cursor = new Args(args);
@@ -91,7 +94,7 @@ public final class CliParser {
             }
 
             String name = arg;
-            String inline = null;
+            @Nullable String inline = null;
             int eq = arg.indexOf('=');
             if (arg.startsWith("-") && eq > 0) {
                 name = arg.substring(0, eq);
@@ -192,13 +195,13 @@ public final class CliParser {
         };
     }
 
-    private static void rejectValue(String option, String inline) {
+    private static void rejectValue(String option, @Nullable String inline) {
         if (inline != null) {
             throw new UsageException("选项 " + option + " 不接受值: " + inline);
         }
     }
 
-    private static String value(String option, String inline, Args cursor) {
+    private static String value(String option, @Nullable String inline, Args cursor) {
         return inline != null ? inline : cursor.requireValue(option);
     }
 
@@ -236,22 +239,22 @@ public final class CliParser {
 
     /** 可变收集器。 */
     private static final class Builder {
-        private String mcVersionA;
-        private String mcVersionB;
+        private @Nullable String mcVersionA;
+        private @Nullable String mcVersionB;
         private boolean fabric;
         private boolean neoForge;
-        private String fabricOverrideA;
-        private String fabricOverrideB;
-        private String neoForgeOverrideA;
-        private String neoForgeOverrideB;
-        private Path cacheDir;
+        private @Nullable String fabricOverrideA;
+        private @Nullable String fabricOverrideB;
+        private @Nullable String neoForgeOverrideA;
+        private @Nullable String neoForgeOverrideB;
+        private @Nullable Path cacheDir;
         private ReportFormat format = ReportFormat.TEXT;
-        private Path output;
+        private @Nullable Path output;
         private boolean failOnError;
         private boolean dryRun;
         private ReachabilityScope reachability = ReachabilityScope.ALL;
-        private String entryClass;
-        private String entryMethod;
+        private @Nullable String entryClass;
+        private @Nullable String entryMethod;
         private boolean help;
         private boolean version;
 
