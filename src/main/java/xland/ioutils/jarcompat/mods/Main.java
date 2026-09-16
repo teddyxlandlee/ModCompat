@@ -12,7 +12,7 @@ public final class Main {
     private Main() {
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         System.exit(ModCompatApp.run(args, System.out, System.err));
     }
 }

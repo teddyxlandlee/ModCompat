@@ -49,7 +49,7 @@ public final class Zips {
         if (!Files.isRegularFile(file)) {
             return false;
         }
-        try (ZipFile ignored = new ZipFile(file.toFile())) {
+        try (ZipFile _ = new ZipFile(file.toFile())) {
             return true;
         } catch (IOException e) {
             return false;

@@ -38,11 +38,11 @@ CLI → 元数据解析（Mojang / Fabric / NeoForge）→ lib-a / lib-b（同�
 
 ## 2. 环境要求
 
-| 项目 | 版本 |
-|---|---|
-| JDK | 25（`build.gradle.kts` 使用 `JavaLanguageVersion.of(25)`） |
-| Gradle | 通过 `./gradlew` 使用 9.7.1，无需本机安装 |
-| 网络 | 需要访问 Mojang / Fabric / NeoForge 元数据与 Maven 仓库（见 [§9 已知限制](#9-已知限制)） |
+| 项目   | 版本                                                                                     |
+|--------|------------------------------------------------------------------------------------------|
+| JDK    | 25（`build.gradle.kts` 使用 `JavaLanguageVersion.of(25)`）                               |
+| Gradle | 通过 `./gradlew` 使用 9.7.1，无需本机安装                                                |
+| 网络   | 需要访问 Mojang / Fabric / NeoForge 元数据与 Maven 仓库（见 [§9 已知限制](#9-已知限制)） |
 
 依赖：
 
@@ -65,11 +65,11 @@ testCompileOnly("xland.ioutils:JarCompat:0.1.4")
 
 产物：
 
-| 产物 | 说明 |
-|---|---|
-| `build/libs/ModCompat-0.1.0-all.jar` | **自包含可执行 JAR**（含 JarCompat + ASM + nanojson），`java -jar` 直接运行 |
-| `build/libs/ModCompat-0.1.0.jar` | 普通库 JAR；作为依赖使用，运行时 classpath 上需要 JarCompat 与 ASM |
-| `build/distributions/*.zip` / `*.tar` | `application` 插件生成的发行包，内含 `bin/modcompat` 启动脚本 |
+| 产物                                  | 说明                                                                        |
+|---------------------------------------|-----------------------------------------------------------------------------|
+| `build/libs/ModCompat-0.1.0-all.jar`  | **自包含可执行 JAR**（含 JarCompat + ASM + nanojson），`java -jar` 直接运行 |
+| `build/libs/ModCompat-0.1.0.jar`      | 普通库 JAR；作为依赖使用，运行时 classpath 上需要 JarCompat 与 ASM          |
+| `build/distributions/*.zip` / `*.tar` | `application` 插件生成的发行包，内含 `bin/modcompat` 启动脚本               |
 
 ---
 
@@ -107,36 +107,36 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 
 ### 必填
 
-| 参数 | 说明 |
-|---|---|
-| `<program>` | 要比较的 Minecraft mod JAR 路径（位置参数，只能给一个；路径以 `-` 开头时用 `--` 分隔） |
-| `-a, --version-a <version>` | 环境 A 的 Minecraft 版本号，例如 `1.21.1` |
-| `-b, --version-b <version>` | 环境 B 的 Minecraft 版本号，例如 `1.21.4` |
+| 参数                        | 说明                                                                                   |
+|-----------------------------|----------------------------------------------------------------------------------------|
+| `<program>`                 | 要比较的 Minecraft mod JAR 路径（位置参数，只能给一个；路径以 `-` 开头时用 `--` 分隔） |
+| `-a, --version-a <version>` | 环境 A 的 Minecraft 版本号，例如 `1.21.1`                                              |
+| `-b, --version-b <version>` | 环境 B 的 Minecraft 版本号，例如 `1.21.4`                                              |
 
 ### 环境开关与版本覆盖
 
-| 参数 | 说明 |
-|---|---|
-| `--fabric` | 环境构建时加入 Fabric Loader 相关库 |
-| `--neoforge` | 环境构建时加入 NeoForge 相关库 |
-| `--fabric-override-a <version>` / `--fabric-override-b <version>` | 指定该侧 Fabric Loader 版本；**必须同时指定 `--fabric`** |
-| `--neoforge-override-a <version>` / `--neoforge-override-b <version>` | 指定该侧 NeoForge 版本；**必须同时指定 `--neoforge`** |
+| 参数                                                                  | 说明                                                     |
+|-----------------------------------------------------------------------|----------------------------------------------------------|
+| `--fabric`                                                            | 环境构建时加入 Fabric Loader 相关库                      |
+| `--neoforge`                                                          | 环境构建时加入 NeoForge 相关库                           |
+| `--fabric-override-a <version>` / `--fabric-override-b <version>`     | 指定该侧 Fabric Loader 版本；**必须同时指定 `--fabric`** |
+| `--neoforge-override-a <version>` / `--neoforge-override-b <version>` | 指定该侧 NeoForge 版本；**必须同时指定 `--neoforge`**    |
 
 两个开关可独立指定、可同时指定、也可都不指定。
 
 ### 其他选项
 
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `--cache-dir <dir>` | `$MODCOMPAT_CACHE_DIR` → `$XDG_CACHE_HOME/modcompat` → `~/.cache/modcompat` | JAR 下载缓存目录 |
-| `--format <text\|json>` | `text` | 报告格式 |
-| `-o, --output <file>` | 无 | 额外把报告写入文件（父目录自动创建） |
-| `--fail-on-error` | 关闭 | 存在确定不兼容项时返回退出码 2；默认无论结论都返回 0 |
-| `--dry-run` | 关闭 | 只解析元数据并打印 `lib-a` / `lib-b`（JSON 模式下为 `environmentA/B.coords`），不下载、不比较 |
-| `--reachability <all\|entry>` | `all` | 可达性策略；mod 通常没有 `Main-Class`，`entry` 模式会退化成“全部 WARN” |
-| `--entry <class>` | 无 | 入口类（配合 `--reachability entry`） |
-| `--entry-method <name>` | `main` | 入口方法名 |
-| `-h, --help` / `-V, --version` | — | 帮助 / 版本 |
+| 参数                           | 默认                                                                        | 说明                                                                                          |
+|--------------------------------|-----------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `--cache-dir <dir>`            | `$MODCOMPAT_CACHE_DIR` → `$XDG_CACHE_HOME/modcompat` → `~/.cache/modcompat` | JAR 下载缓存目录                                                                              |
+| `--format <text\|json>`        | `text`                                                                      | 报告格式                                                                                      |
+| `-o, --output <file>`          | 无                                                                          | 额外把报告写入文件（父目录自动创建）                                                          |
+| `--fail-on-error`              | 关闭                                                                        | 存在确定不兼容项时返回退出码 2；默认无论结论都返回 0                                          |
+| `--dry-run`                    | 关闭                                                                        | 只解析元数据并打印 `lib-a` / `lib-b`（JSON 模式下为 `environmentA/B.coords`），不下载、不比较 |
+| `--reachability <all\|entry>`  | `all`                                                                       | 可达性策略；mod 通常没有 `Main-Class`，`entry` 模式会退化成“全部 WARN”                        |
+| `--entry <class>`              | 无                                                                          | 入口类（配合 `--reachability entry`）                                                         |
+| `--entry-method <name>`        | `main`                                                                      | 入口方法名                                                                                    |
+| `-h, --help` / `-V, --version` | —                                                                           | 帮助 / 版本                                                                                   |
 
 选项支持 `--opt value` 与 `--opt=value` 两种写法（短选项同理：`-a 1.21.1`、`-a=1.21.1`）。
 
@@ -148,9 +148,9 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
   指定了 override 却没有开对应开关 → **报错**（退出码 1），因为该版本不会被使用，静默忽略只会误导。
 * 未指定 override 的一侧，取该 loader 在**该侧 Minecraft 版本**下的最新版本：
 
-  | loader | 版本来源 |
-  |---|---|
-  | Fabric | `https://meta.fabricmc.net/v2/versions/loader/<mcVersion>` → 断言 `loaders` 非空 → `loaders[0].loader.version` |
+  | loader   | 版本来源                                                                                                                                                           |
+  |----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  | Fabric   | `https://meta.fabricmc.net/v2/versions/loader/<mcVersion>` → 断言 `loaders` 非空 → `loaders[0].loader.version`                                                     |
   | NeoForge | `https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge` → 按 MC 版本算前缀（`1.21.1 → 21.1`、`26.1 → 26.1.0`）→ 前缀过滤 + 版本排序取最新 |
 
 * “无意义的比较”：若最终 `(mcVersion, fabricLoaderVersion, neoForgeVersion)` 在 A、B 两侧完全相同，
@@ -172,12 +172,12 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 
 退出码：
 
-| 退出码 | 含义 |
-|---|---|
-| `0` | 比较成功完成（无论结论是否兼容；`--fail-on-error` 未开启时“不兼容”也是 0） |
-| `1` | 参数错误：缺少必填项、override 与开关冲突、非法取值、mod JAR 不存在或不是可读取的 ZIP/JAR、无意义的比较 |
-| `2` | 发现了确定不兼容项，且指定了 `--fail-on-error` |
-| `3` | 网络、元数据/JSON 解析、下载、JarCompat 分析失败 |
+| 退出码 | 含义                                                                                                    |
+|--------|---------------------------------------------------------------------------------------------------------|
+| `0`    | 比较成功完成（无论结论是否兼容；`--fail-on-error` 未开启时“不兼容”也是 0）                              |
+| `1`    | 参数错误：缺少必填项、override 与开关冲突、非法取值、mod JAR 不存在或不是可读取的 ZIP/JAR、无意义的比较 |
+| `2`    | 发现了确定不兼容项，且指定了 `--fail-on-error`                                                          |
+| `3`    | 网络、元数据/JSON 解析、下载、JarCompat 分析失败                                                        |
 
 ---
 
@@ -237,14 +237,14 @@ src/test/java/...                 # 42 个测试：坐标解析 / URL 拼接 / �
 
 ## 10. 与 JarCompat 的 API 对应关系
 
-| ModCompat | JarCompat 0.1.4 |
-|---|---|
-| `ModCompatApp.check(...)` | `JarCompat.request()...build()` → `JarCompat.check(CheckRequest)` |
-| `CliOptions.format()` | `ReportFormat.TEXT` / `ReportFormat.JSON` |
-| `CliOptions.reachability()` | `ReachabilityScope.ALL`（默认）/ `ENTRY` |
-| `CheckReport` 的结论与计数 | `verdict()` / `errorCount()` / `warningCount()` / `compatibleReferenceCount()` / `errorsByLibBJar()` 等 |
-| `--format text` 的报告 | `CheckReport.toText()`（`JarCompat.render(report, TEXT)`） |
-| `--format json` 的报告 | `CheckReport.toJson()`（即 `JarCompat.render(report, JSON)`）的原样嵌入，不做字段级改写 |
+| ModCompat                   | JarCompat 0.1.4                                                                                         |
+|-----------------------------|---------------------------------------------------------------------------------------------------------|
+| `ModCompatApp.check(...)`   | `JarCompat.request()...build()` → `JarCompat.check(CheckRequest)`                                       |
+| `CliOptions.format()`       | `ReportFormat.TEXT` / `ReportFormat.JSON`                                                               |
+| `CliOptions.reachability()` | `ReachabilityScope.ALL`（默认）/ `ENTRY`                                                                |
+| `CheckReport` 的结论与计数  | `verdict()` / `errorCount()` / `warningCount()` / `compatibleReferenceCount()` / `errorsByLibBJar()` 等 |
+| `--format text` 的报告      | `CheckReport.toText()`（`JarCompat.render(report, TEXT)`）                                              |
+| `--format json` 的报告      | `CheckReport.toJson()`（即 `JarCompat.render(report, JSON)`）的原样嵌入，不做字段级改写                 |
 
 ---
 

@@ -173,7 +173,7 @@ public final class CliParser {
             b.entryMethod = "main";
         }
 
-        return b.build(Path.of(positionals.get(0)));
+        return b.build(Path.of(positionals.getFirst()));
     }
 
     private static ReportFormat parseFormat(String value) {

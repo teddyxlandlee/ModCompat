@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import com.grack.nanojson.JsonObject;
 import com.grack.nanojson.JsonParser;
@@ -76,32 +77,18 @@ public final class ModCompatApp {
      * @return 进程退出码，见 {@link ExitCodes}
      */
     public static int run(String[] args, PrintStream out, PrintStream err) {
-        CliOptions options;
-        try {
-            options = CliParser.parse(args);
-        } catch (UsageException e) {
-            return usageError(e, err);
-        }
-        if (options.help()) {
-            out.println(CliParser.usage());
-            return ExitCodes.OK;
-        }
-        if (options.version()) {
-            out.println(versionLine());
-            return ExitCodes.OK;
-        }
-        try (HttpFetcher fetcher = new HttpFetcher()) {
-            return new ModCompatApp(options, fetcher, out, err).execute();
-        } catch (IOException e) {
-            err.println("错误: 无法关闭下载器: " + e.getMessage());
-            return ExitCodes.FAILURE;
-        }
+        return implRun(args, null, out, err);
     }
 
     /**
      * 使用自定义 {@link Fetcher} 执行（便于测试，不触发真实网络访问）。
      */
     public static int runWith(String[] args, Fetcher fetcher, PrintStream out, PrintStream err) {
+        Objects.requireNonNull(fetcher, "fetcher");
+        return implRun(args, fetcher, out, err);
+    }
+
+    private static int implRun(String[] args, /*@Nullable*/ Fetcher fetcher, PrintStream out, PrintStream err) {
         CliOptions options;
         try {
             options = CliParser.parse(args);
@@ -116,7 +103,17 @@ public final class ModCompatApp {
             out.println(versionLine());
             return ExitCodes.OK;
         }
-        return new ModCompatApp(options, fetcher, out, err).execute();
+
+        if (fetcher == null) {
+            try (final Fetcher newFetcher = new HttpFetcher()) {
+                return new ModCompatApp(options, newFetcher, out, err).execute();
+            } catch (IOException e) {
+                err.println("错误: 无法关闭下载器: " + e.getMessage());
+                return ExitCodes.FAILURE;
+            }
+        } else {
+            return new ModCompatApp(options, fetcher, out, err).execute();
+        }
     }
 
     /** 执行一次完整比较。 */

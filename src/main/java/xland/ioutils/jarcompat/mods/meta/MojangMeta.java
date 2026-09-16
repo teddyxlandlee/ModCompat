@@ -47,8 +47,7 @@ public final class MojangMeta {
         if (versions == null) {
             throw new ModCompatException("版本清单 " + VERSION_MANIFEST_URL + " 缺少 versions 数组");
         }
-        for (int i = 0; i < versions.size(); i++) {
-            Object raw = versions.get(i);
+        for (Object raw : versions) {
             if (!(raw instanceof JsonObject entry)) {
                 continue;
             }

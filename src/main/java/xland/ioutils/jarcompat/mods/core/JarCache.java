@@ -123,16 +123,7 @@ public final class JarCache {
         if (cut >= 0) {
             path = path.substring(0, cut);
         }
-        int slash = path.lastIndexOf('/');
-        String name = slash >= 0 ? path.substring(slash + 1) : path;
-        StringBuilder sb = new StringBuilder(name.length());
-        for (int i = 0; i < name.length(); i++) {
-            char c = name.charAt(i);
-            boolean keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-                    || c == '.' || c == '-' || c == '_';
-            sb.append(keep ? c : '_');
-        }
-        String sanitized = sb.toString();
+        String sanitized = sanitizePath(path);
         if (sanitized.isBlank() || ".".equals(sanitized) || "..".equals(sanitized)) {
             sanitized = "resource";
         }
@@ -142,12 +133,25 @@ public final class JarCache {
         return sanitized;
     }
 
+    private static String sanitizePath(String path) {
+        int slash = path.lastIndexOf('/');
+        String name = slash >= 0 ? path.substring(slash + 1) : path;
+        StringBuilder sb = new StringBuilder(name.length());
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            boolean keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '.' || c == '-' || c == '_';
+            sb.append(keep ? c : '_');
+        }
+        return sb.toString();
+    }
+
     static String sha1Hex(String text) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-1");
             return HexFormat.of().formatHex(digest.digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("当前 JVM 不支持 SHA-1", e);
+            throw new InternalError("当前 JVM 不支持 SHA-1", e);
         }
     }
 }

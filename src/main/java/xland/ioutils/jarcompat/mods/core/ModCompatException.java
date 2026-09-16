@@ -1,5 +1,7 @@
 package xland.ioutils.jarcompat.mods.core;
 
+import java.io.Serial;
+
 /**
  * ModCompat 的受检错误语义：网络失败、元数据缺失、JSON 解析失败等。
  *
@@ -7,6 +9,7 @@ package xland.ioutils.jarcompat.mods.core;
  */
 public class ModCompatException extends RuntimeException {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     public ModCompatException(String message) {

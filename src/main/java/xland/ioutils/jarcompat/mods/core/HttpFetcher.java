@@ -1,5 +1,7 @@
 package xland.ioutils.jarcompat.mods.core;
 
+import xland.ioutils.jarcompat.mods.ModCompatApp;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -17,7 +19,7 @@ import java.util.Objects;
 public final class HttpFetcher implements Fetcher {
 
     /** 默认 User-Agent；元数据服务会拒绝空 UA。版本号与 {@code build.gradle.kts} 中的 JarCompat 坐标一致。 */
-    public static final String USER_AGENT = "ModCompat/0.1.0 (JarCompat 0.1.4)";
+    public static final String USER_AGENT = "ModCompat/" + ModCompatApp.TOOL_VERSION + " (JarCompat " + ModCompatApp.JAR_COMPAT_VERSION + ")";
 
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(2);
