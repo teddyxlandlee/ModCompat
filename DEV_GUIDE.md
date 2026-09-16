@@ -1,199 +1,226 @@
-目标：利用 `xland.ioutils:JarCompat:0.1.3` 下的 API，写一个 Java 命令行程序，用于比较一个 Minecraft mod JAR 在两个不同的 Minecraft 环境下的兼容性。
+以下为优化后的提示词，可直接用于让代码生成模型/开发者实现项目：
 
-## 参数
-* (required) `<program>`: Mod JAR
-* (required) `-a / --version-a <version> | -b / --version-b <version>`: 两个Minecraft 版本号
-* `--fabric | --neoforge`: 若存在，则包含 Fabric/NeoForge 的库。每个flag都可以指定或不指定。
-* `--fabric-override-a | --fabric-override-b | --neoforge-override-a | --neoforge-override-b <version>`: 若存在，则将a/b下的 Fabric Loader/NeoForge 版本覆盖为指定版本。未指定的，默认为对应loader的最新版本（下面有获取方法）。
-> 若无 `--fabric` 但指定 `--fabric-override-a`（或类似情况），则报错。
-> 如果 `(mcVersion, fabricLoaderVersion, neoForgeVersion)` 在a和b下完全相同，显然这样的比较无意义，退出。
+---
 
-## 上游的 `lib-a` 和 `lib-b` 对应什么？
+# 任务：实现 Minecraft Mod JAR 双环境兼容性比较 CLI
+
+你是一名 Java 开发者。请实现一个 Java 命令行程序，使用 `xland.ioutils:JarCompat:0.1.3` 提供的 API，比较一个 Minecraft mod JAR 在两个不同 Minecraft 环境下的兼容性。请生成完整可构建项目，包括源码、构建文件（Maven 或 Gradle）和 `README.md`。
+
+必须使用 `xland.ioutils:JarCompat:0.1.3` 暴露的 API 完成核心 JAR 比较逻辑，不要自行重写等价的核心比较器。若该库 API 不明确，请先根据 Maven 坐标查找其文档/源码，确定正确入口类与调用方式。
+
+## 1. CLI 参数
+
+程序名：`<program>`，必填，表示要比较的 Minecraft mod JAR 路径。
+
+必填：
+- `-a, --version-a <version>`：环境 A 的 Minecraft 版本号。
+- `-b, --version-b <version>`：环境 B 的 Minecraft 版本号。
+
+可选开关：
+- `--fabric`：若指定，则在环境构建中包含 Fabric Loader 相关库。
+- `--neoforge`：若指定，则在环境构建中包含 NeoForge 相关库。
+
+上述两个开关可独立指定，也可同时指定，也可都不指定。
+
+可选覆盖版本：
+- `--fabric-override-a <version>`
+- `--fabric-override-b <version>`
+- `--neoforge-override-a <version>`
+- `--neoforge-override-b <version>`
+
+规则：
+- 若指定了某个 `--fabric-override-*`，但没有指定 `--fabric`，报错。
+- 若指定了某个 `--neoforge-override-*`，但没有指定 `--neoforge`，报错。
+- 对某一侧未指定 override 时，使用对应 loader 在该侧 Minecraft 版本下的最新版本。
+- 若最终 `(mcVersion, fabricLoaderVersion, neoForgeVersion)` 在 A 和 B 下完全相同，则该比较无意义。程序应给出明确提示并提前退出。未启用的 loader 版本不参与“完全相同”判断。
+
+## 2. 构建两侧上游库列表：`lib-a` / `lib-b`
+
+对每一侧 `side ∈ {a, b}`：
+
 ```pseudocode
-const lib = {}
-for (const side of ["a", "b"]) {
-  let thisLibs = [mcJar[side], ...mcLibs[side]]
-  if (fabric) thisLibs = [...thisLibs, ...fabricLoaderLibs[side]] // Fabric Loader 的架构不区分 jar和libs
-  if (neoforge) thisLibs = [...thisLibs, neoForgeJar[side], ...neoForgeLibs[side]]
-  lib[side] = thisLibs
-}
-for (const side of ["a", "b"]) {
-  const other = side === "a" ? "b" : "a"
-  lib[side].removeIf(thisLib => lib[other].any(otherLib => isEquivalent(thisLib, otherLib)))
-}
-// isEquivalent: 相同 maven 坐标（coords）
+libs[side] = [mcJar[side], ...mcLibs[side]]
+
+if fabric:
+    libs[side] += fabricLibs[side]   // Fabric Loader 不区分 jar 和 libs，全部作为 libs 加入
+
+if neoforge:
+    libs[side] += [neoForgeJar[side], ...neoForgeLibs[side]]
 ```
 
-## 获取不同资源的方式及对应 GAV
+然后对每一侧执行去重/过滤：
 
-### `mcJar`, `mcLibs`
-```
-type Resource = {url: string; coords: string}
-let mcJar: Resource
-let mcLibs: Resource[]
-
-let mcVersion: string
-const VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-const versionMetaUrl = (() => {
-    let manifest: object = await fetch(VERSION_MANIFEST)
-    let version: object = manifest["versions"].first((x: object) => x["id"] === mcVersion)
-    return version["url"]
-})();
-const versionMeta: object = await fetch(versionMetaUrl)
-
-mcJar.url = versionMeta["client"]["url"]
-mcJar.coords = "com.mojang:minecraft:" + mcVersion
-
-const libraries: array = versionMeta["libraries"]
-mcLibs = parseLibraries(libraries)
-
-const parseLibraries = (libraries: array) => libraries.map((entry: object) => {
-    let ret = {}
-    ret.coords = entry["name"]
-    if (entry["downloads"]["artifact"]["url"] is string /*且其上级json结构存在*/) {
-      ret.url = entry["downloads"]["artifact"]["url"]
-    } else if (entry["url"] is string) {
-      const mavenRoot = entry["url"]
-      let {group, artifact, version, classifier?, extension?} = parseMavenCoords(ret.coords)  // group:artifact:version[:classifier][@extension]
-      ret.url = getMavenArtifactUrl(mavenRoot, {group, artifact, version, classifier, extension})
-    } else {
-      error
-    }
-    return ret
-})
+```pseudocode
+for side in [a, b]:
+    other = side == a ? b : a
+    libs[side].removeIf(thisLib =>
+        libs[other].any(otherLib => isEquivalent(thisLib, otherLib))
+    )
 ```
 
-### `fabricLibs`
-```
-const loaderVersion: string = fabricLoaderOverride ?? (() => {
-  const loaders: array = await fetch("https://meta.fabricmc.net/v2/versions/loader/" + mcVersion)
-  assert loaders.length !== 0
-  return loaders[0]["loader"]["version"]
-})()
+其中 `isEquivalent` 定义为：两个资源的 Maven 坐标 `coords` 相同。
 
+最终得到 `lib-a` 和 `lib-b`。调用 `JarCompat` API 时，将 `<program>` 作为待比较 mod JAR，将 `lib-a` 与 `lib-b` 作为两侧上游库/环境依赖，输出兼容性比较结果。
 
-const loaderMeta: object = await fetch(`https://meta.fabricmc.net/v2/versions/loader/{mcVersion}/{loaderVersion}/profile/json`)
+## 3. 资源获取与 Maven 坐标
 
-fabricLibs = parseLibraries(loaderMeta["libraries"])
+定义通用类型：
+
+```text
+Resource = { url: string, coords: string }
 ```
 
-### `neoForgeJar`, `neoForgeLibs`
-首先定义根据 mcVersion 查询最新 neoForgeVersion 的方法 `export async function latestNeo(mcVersion: string): string`：
+### 3.1 Minecraft 原版 JAR 与库
+
+```text
+VERSION_MANIFEST = https://piston-meta.mojang.com/mc/game/version_manifest_v2.json
 ```
-const API_URL = 'https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge';
 
-/**
- * Function: Convert a Minecraft version to a NeoForge version prefix.
- * Rules:
- *   a) If the first segment is "1": remove "1", take the next two segments,
- *      pad with "0" if missing, return a two-part prefix.
- *      1.21   -> 21.0
- *      1.21.1 -> 21.1
- *   b) If the first segment is not "1": keep all segments, ensure at least three,
- *      pad with "0" if missing, return a three-part prefix.
- *      26.1   -> 26.1.0
- *      26.1.2 -> 26.1.2
- */
-function mcVersionToNeoForgePrefix(mcVersion) {
-  const parts = mcVersion.split('.');
-  if (parts.length < 2) throw new Error('Invalid Minecraft version format: ' + mcVersion);
+步骤：
+1. 拉取 `version_manifest_v2.json`。
+2. 在 `versions` 中找到 `id == mcVersion` 的条目。
+3. 拉取其 `url` 对应的 version meta JSON。
+4. `mcJar.url = versionMeta.client.url`
+5. `mcJar.coords = "com.mojang:minecraft:" + mcVersion`
+6. `mcLibs = parseLibraries(versionMeta.libraries)`
 
-  if (parts[0] === '1') {
-    const major = parts[1];
-    const minor = parts[2] ?? '0';
-    return `${major}.${minor}`;
-  } else {
-    const major = parts[0];
-    const minor = parts[1];
-    const patch = parts[2] ?? '0';
-    return `${major}.${minor}.${patch}`;
+实现 `parseLibraries(libraries)`：
+- 对每个 `entry`：
+    - `ret.coords = entry.name`
+    - 如果 `entry.downloads.artifact.url` 存在且为字符串，则 `ret.url = entry.downloads.artifact.url`
+    - 否则如果 `entry.url` 为字符串，则：
+        - 用 `parseMavenCoords(ret.coords)` 解析 `group:artifact:version[:classifier][@extension]`
+        - 用 `getMavenArtifactUrl(entry.url, {group, artifact, version, classifier, extension})` 拼接下载 URL
+    - 否则报错。
+
+`parseMavenCoords` 需支持：
+- `group:artifact:version`
+- `group:artifact:version:classifier`
+- `group:artifact:version@extension`
+- `group:artifact:version:classifier@extension`
+
+`getMavenArtifactUrl` 按 Maven 仓库规则拼接 URL。
+
+### 3.2 Fabric
+
+若启用 `--fabric`：
+
+```text
+loaderVersion = fabricOverride
+    ?? fetch("https://meta.fabricmc.net/v2/versions/loader/" + mcVersion)
+        -> 断言 loaders 非空 -> loaders[0].loader.version
+```
+
+然后：
+
+```text
+loaderMeta = fetch(
+  "https://meta.fabricmc.net/v2/versions/loader/" + mcVersion + "/" + loaderVersion + "/profile/json"
+)
+
+fabricLibs = parseLibraries(loaderMeta.libraries)
+```
+
+### 3.3 NeoForge
+
+若启用 `--neoforge`：
+
+```text
+neoVersion = neoForgeOverride ?? latestNeo(mcVersion)
+```
+
+实现 `latestNeo(mcVersion)`：
+
+API：
+
+```text
+https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge
+```
+
+Minecraft 版本到 NeoForge 前缀规则：
+- 若第一段是 `"1"`：去掉 `"1"`，取接下来两段，不足补 `"0"`，返回两段前缀。
+    - `1.21` -> `21.0`
+    - `1.21.1` -> `21.1`
+- 若第一段不是 `"1"`：保留所有段，至少三段，不足补 `"0"`，返回三段前缀。
+    - `26.1` -> `26.1.0`
+    - `26.1.2` -> `26.1.2`
+
+版本排序解析：
+- 匹配 `^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta))?$`
+- 只比较 major、minor、patch 数字部分，忽略 alpha/beta 后缀。
+- 无法识别的版本返回 null，排序时放在合适位置。
+
+`latestNeo` 步骤：
+1. 计算前缀 `prefix`。
+2. 拉取版本 JSON，取 `data.versions`。
+3. 过滤 `v.startsWith(prefix + ".")` 的候选版本。
+4. 按数字部分升序排序。
+5. 返回最后一个，即最新版本。
+6. 若没有候选，报错。
+
+NeoForge 资源：
+
+```text
+neoForgeJar.url = getMavenArtifactUrl(
+  "https://maven.neoforged.net/releases",
+  {
+    group: "net.neoforged",
+    artifact: "neoforge",
+    version: neoVersion,
+    classifier: "universal"
   }
-}
+)
 
-/**
- * Function: Parse a NeoForge version string into a comparable array for sorting.
- * Input examples: "21.4.111-beta", "21.4.111-alpha", "21.4.111"
- * Output example: [21, 4, 111]
- * Alpha and beta suffixes are matched but ignored in comparison.
- * Returns null if the format is not recognized.
- */
-function parseVersionForSort(versionStr) {
-  const match = versionStr.match(/^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta))?$/);
-  if (!match) return null;
+neoForgeJar.coords = "net.neoforged:neoforge:" + neoVersion + ":universal"
 
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-
-  return [major, minor, patch];
-}
-
-/**
- * Function: Get the latest NeoForge installer jar URL for a given Minecraft version.
- * Steps:
- *   1. Convert the MC version to a NeoForge prefix.
- *   2. Fetch the JSON API and get all NeoForge versions.
- *   3. Filter versions that start with the prefix followed by a dot.
- *   4. Sort them by version number and pick the latest.
- */
-export async function latestNeo(mcVersion) {
-  const prefix = mcVersionToNeoForgePrefix(mcVersion);
-
-  // 1. Fetch JSON data
-  const response = await fetch(API_URL);
-  const data = await response.json();
-  const allVersions = data.versions ?? [];
-
-  // 2. Filter versions belonging to this Minecraft version
-  const candidates = allVersions.filter(v => v.startsWith(prefix + '.'));
-
-  if (candidates.length === 0) {
-    throw new Error(`No NeoForge version found for Minecraft ${mcVersion} (prefix ${prefix})`);
+neoInstallerJarUrl = getMavenArtifactUrl(
+  "https://maven.neoforged.net/releases",
+  {
+    group: "net.neoforged",
+    artifact: "neoforge",
+    version: neoVersion,
+    classifier: "installer"
   }
-
-  // 3. Sort using parseVersionForSort; only numeric parts are compared
-  candidates.sort((a, b) => {
-    const pa = parseVersionForSort(a);
-    const pb = parseVersionForSort(b);
-
-    if (pa === null && pb === null) return 0;
-    if (pa === null) return -1;
-    if (pb === null) return 1;
-
-    // Compare major, minor, patch only
-    for (let i = 0; i < 3; i++) {
-      if (pa[i] !== pb[i]) return pa[i] - pb[i];
-    }
-    return 0;
-  });
-
-  // 4. Pick the latest version (last in ascending order)
-  return candidates[candidates.length - 1];
-}
+)
 ```
 
-据此得出 `neoForgeJar` 和 `neoForgeLibs` 的获取方法：
-```
-let neoForgeJar: Resource
-let neoForgeLibs: Resource[]
+下载 installer JAR，作为 ZIP 读取 `/version.json`：
 
-let neoVersion: string = neoForgeOverride ?? latestNeo(mcVersion)
-let neoInstallerJarUrl: string
-
-neoForgeJar.url = getMavenArtifactUrl("https://maven.neoforged.net/releases", {
-  group: "net.neoforged", artifact: "neoforge", version: neoVersion, classifier: "universal"
-})
-neoForgeJar.coords = "net.neoforged:neoforge:" + neoVersion + ":userdev"
-
-neoInstallerJarUrl = getMavenArtifactUrl("https://maven.neoforged.net/releases", {
-  group: "net.neoforged", artifact: "neoforge", version: neoVersion, classifier: "installer"
-})
-
-const installerArchive: ZipFile = await fetch(neoInstallerJarUrl)
-const versionJson: object = installerArchive.read("/version.json")
-neoForgeLibs = parseLibraries(versionJson["libraries"])
+```text
+versionJson = installerArchive.read("/version.json")
+neoForgeLibs = parseLibraries(versionJson.libraries)
 ```
 
-## 额外要求
+## 4. 比较与输出
 
-还需要 README.md 来说明其用途。
+- 使用 `JarCompat:0.1.3` API 比较 `<program>`。
+- 将 `lib-a` 与 `lib-b` 作为两侧上游库/环境依赖传入。
+- 输出应清晰包含：
+    - 环境 A/B 的 Minecraft 版本；
+    - 启用的 loader 及版本；
+    - 最终兼容性结论；
+    - JarCompat 返回的差异/缺失/冲突等关键信息。
+- 错误信息输出到 stderr。
+- 成功比较返回退出码 0；参数错误、网络错误、解析错误、无意义比较等返回非 0，并在 README 中说明。
+
+## 5. README.md
+
+必须提供 `README.md`，说明：
+- 项目用途；
+- 构建方式；
+- 运行方式；
+- 所有 CLI 参数及示例；
+- `--fabric` / `--neoforge` 与 override 的关系；
+- 依赖 `xland.ioutils:JarCompat:0.1.3`；
+- 已知限制，例如需要网络访问 Mojang/Fabric/NeoForge 元数据与 Maven 仓库。
+
+## 6. 验收标准
+
+- CLI 参数解析正确，必填项和冲突项校验完整。
+- 能正确获取 Minecraft、Fabric、NeoForge 资源并解析 Maven 坐标。
+- 能按规则构建 `lib-a` 和 `lib-b`，并按相同 Maven 坐标过滤。
+- 正确调用 `xland.ioutils:JarCompat:0.1.3` API，而不是自写核心比较器。
+- 输出可读，错误处理明确。
+- 项目可构建、可运行，且附带完整 README。
+
+请生成完整 Java 项目，不要只给伪代码或片段。
