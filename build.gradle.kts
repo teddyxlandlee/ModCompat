@@ -17,10 +17,9 @@ java {
 }
 
 dependencies {
-    compileOnly("xland.ioutils:JarCompat:0.1.3")
-    runtimeOnly("xland.ioutils:JarCompat:0.1.3:all")
+    compileOnly("xland.ioutils:JarCompat:0.1.4")
+    runtimeOnly("xland.ioutils:JarCompat:0.1.4:all")
     // 测试代码同样只依赖 JarCompat 的公共 API；运行时由上面的 -all 构件提供 ASM
-    testCompileOnly("xland.ioutils:JarCompat:0.1.3")
 
     implementation("com.grack:nanojson:1.10")
 

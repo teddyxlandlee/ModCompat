@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.grack.nanojson.JsonObject;
+import com.grack.nanojson.JsonParser;
+import com.grack.nanojson.JsonParserException;
 import com.grack.nanojson.JsonWriter;
 
 import xland.ioutils.jarcompat.api.CheckReport;
@@ -27,15 +29,15 @@ import xland.ioutils.jarcompat.mods.core.JarCache;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
 import xland.ioutils.jarcompat.mods.core.Resource;
+import xland.ioutils.jarcompat.mods.core.Zips;
 import xland.ioutils.jarcompat.mods.env.BuiltEnvironment;
 import xland.ioutils.jarcompat.mods.env.EnvironmentBuilder;
 import xland.ioutils.jarcompat.mods.env.EnvironmentFilter;
-import xland.ioutils.jarcompat.mods.report.ReportJson;
 
 /**
  * ModCompat 主流程：解析参数 → 构建两侧环境 → 过滤同坐标资源 → 下载 JAR → 调用 JarCompat → 输出报告。
  *
- * <p>核心比较逻辑完全交给 {@code xland.ioutils:JarCompat:0.1.3} 的公共 API
+ * <p>核心比较逻辑完全交给 {@code xland.ioutils:JarCompat:0.1.4} 的公共 API
  * （{@link JarCompat#request()} / {@link JarCompat#check(CheckRequest)}），本项目只负责
  * 环境元数据获取、资源列表构建与结果呈现。</p>
  */
@@ -54,7 +56,7 @@ public final class ModCompatApp {
      * {@code Implementation-Version}，而 shadow 打包后的 fat JAR 会丢掉这个属性，
      * 于是会退化成 {@code 0.1.0}，显示出来的版本就不对了。</p>
      */
-    public static final String JAR_COMPAT_VERSION = "0.1.3";
+    public static final String JAR_COMPAT_VERSION = "0.1.4";
 
     private final CliOptions options;
     private final Fetcher fetcher;
@@ -122,6 +124,11 @@ public final class ModCompatApp {
         Path program = options.program();
         if (!Files.isRegularFile(program)) {
             err.println("参数错误: mod JAR 不存在或不是普通文件: " + program);
+            return ExitCodes.USAGE;
+        }
+        if (!Zips.isReadableZip(program)) {
+            // 提前失败：即使 mod JAR 损坏，也不要先下载几百 MB 的上游库
+            err.println("参数错误: mod JAR 不是可读取的 ZIP/JAR 文件: " + program);
             return ExitCodes.USAGE;
         }
 
@@ -312,9 +319,10 @@ public final class ModCompatApp {
     /**
      * 组合输出：环境信息 + JarCompat 报告（置于 {@code report} 字段）。
      *
-     * <p>报告 JSON 由 {@link ReportJson} 依据 JarCompat 的公共报告 API 序列化：
-     * 0.1.3 自带的 {@code CheckReport.toJson()}（即 {@code JarCompat.render(report, JSON)}）
-     * 因为 nanojson {@code JsonStringWriter} 未覆写 {@code toString()} 而返回对象字符串，不是合法 JSON。</p>
+     * <p>{@code report} 直接采用 JarCompat 自己渲染的 JSON 文本（{@link CheckReport#toJson()}，
+     * 等价于 {@code JarCompat.render(report, ReportFormat.JSON)}，0.1.4 起为合法 JSON），
+     * 这里仅仅把它解析成 {@link JsonObject} 以便嵌入本工具的外层文档，不做任何字段级改写，
+     * 因此报告内容与 {@code JarCompat} CLI 的 {@code --format json} 完全一致。</p>
      */
     private String renderJson(CheckReport report, BuiltEnvironment a, BuiltEnvironment b,
                               EnvironmentFilter.Result libA, EnvironmentFilter.Result libB) {
@@ -327,8 +335,24 @@ public final class ModCompatApp {
         root.put("reachability", options.reachability().name());
         root.put("environmentA", environmentJson(a, libA));
         root.put("environmentB", environmentJson(b, libB));
-        root.put("report", ReportJson.toJsonObject(report));
+        root.put("report", parseJarCompatReport(report));
         return JsonWriter.indent("  ").string().value(root).done();
+    }
+
+    /**
+     * 把 JarCompat 渲染的 JSON 报告文本解析为 {@link JsonObject}，用于嵌入外层文档。
+     *
+     * <p>只做“解析”，不重新拼装字段；如果 JarCompat 返回的不是合法 JSON，这里会明确报错
+     * （退出码 3），而不是悄悄输出一份自制的报告。</p>
+     */
+    private static JsonObject parseJarCompatReport(CheckReport report) {
+        String text = report.toJson();
+        try {
+            return JsonParser.object().from(text);
+        } catch (JsonParserException e) {
+            throw new ModCompatException("无法解析 JarCompat " + JAR_COMPAT_VERSION
+                    + " 渲染的 JSON 报告: " + e.getMessage(), e);
+        }
     }
 
     private JsonObject environmentJson(BuiltEnvironment environment, EnvironmentFilter.Result result) {

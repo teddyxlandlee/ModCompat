@@ -279,8 +279,14 @@ class ModCompatAppIntegrationTest {
         assertEquals(1, json.getObject("environmentA").getInt("removedSharedWithOtherSide"));
         assertEquals(0, json.getObject("environmentA").getInt("removedDuplicates"));
         JsonObject report = json.getObject("report");
+        assertEquals("JarCompat", report.getString("tool"));
+        assertEquals(1, report.getInt("formatVersion"));
         assertEquals("INCOMPATIBLE", report.getString("verdict"));
         assertTrue(report.getObject("summary").getInt("errors") >= 1, run.out());
+        // report 字段是 JarCompat 自己渲染的 JSON（kindLabel 等字段只有它有，ModCompat 不再自行拼装）
+        JsonObject item = report.getArray("incompatibilities").getObject(0);
+        assertNotNull(item.getString("kindLabel"), run.out());
+        assertEquals("ERROR", item.getString("severity"));
     }
 
     @Test
@@ -442,6 +448,15 @@ class ModCompatAppIntegrationTest {
         Run missingJar = run(fetcher, work.resolve("nope.jar").toString(), "-a", "1.0", "-b", "1.0");
         assertEquals(ExitCodes.USAGE, missingJar.exitCode());
         assertTrue(missingJar.err().contains("mod JAR 不存在"), missingJar.err());
+
+        // mod JAR 不是有效 ZIP/JAR → 在下载上游库之前就报参数错误
+        Path broken = work.resolve("broken.jar");
+        Files.writeString(broken, "这不是一个 JAR");
+        Run brokenJar = run(fetcher, broken.toString(), "-a", "1.0", "-b", "1.1",
+                "--cache-dir", work.resolve("broken-cache").toString());
+        assertEquals(ExitCodes.USAGE, brokenJar.exitCode(), brokenJar.err());
+        assertTrue(brokenJar.err().contains("不是可读取的 ZIP/JAR"), brokenJar.err());
+        assertFalse(Files.exists(work.resolve("broken-cache")), "不应在参数校验失败后下载任何资源");
     }
 
     @Test

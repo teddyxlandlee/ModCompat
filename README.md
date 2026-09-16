@@ -4,7 +4,7 @@
 判断该 mod 能否**不重新编译**地在两个环境之间运行；不能时逐条给出确定/潜在的不兼容项、在 mod 中的触发位置，
 以及预计会抛出的运行期错误（如 `NoSuchMethodError` / `NoClassDefFoundError`）。
 
-* 核心 JAR 比较**完全**交给 [`xland.ioutils:JarCompat:0.1.3`](#10-与-jarcompat-的-api-对应关系) 的公共 API
+* 核心 JAR 比较**完全**交给 [`xland.ioutils:JarCompat:0.1.4`](#10-与-jarcompat-的-api-对应关系) 的公共 API
   （`JarCompat.request()` / `JarCompat.check(CheckRequest)` / `CheckReport`）；本项目只负责按 `DEV_GUIDE.md`
   的规则获取 Minecraft / Fabric / NeoForge 元数据、拼装两侧上游库列表、下载 JAR 并呈现报告，**没有自写核心比较器**。
 * 纯静态链接兼容性分析：JarCompat 不加载、不初始化、不执行任何被分析的类。
@@ -47,10 +47,10 @@ CLI → 元数据解析（Mojang / Fabric / NeoForge）→ lib-a / lib-b（同�
 依赖：
 
 ```kotlin
-compileOnly("xland.ioutils:JarCompat:0.1.3")          // 只用它的公共 API 编译
-runtimeOnly("xland.ioutils:JarCompat:0.1.3:all")      // 运行期用自带 ASM 的 fat 构件
+compileOnly("xland.ioutils:JarCompat:0.1.4")          // 只用它的公共 API 编译
+runtimeOnly("xland.ioutils:JarCompat:0.1.4:all")      // 运行期用自带 ASM 的 fat 构件
 implementation("com.grack:nanojson:1.10")             // JSON 解析
-testCompileOnly("xland.ioutils:JarCompat:0.1.3")
+testCompileOnly("xland.ioutils:JarCompat:0.1.4")
 ```
 
 ---
@@ -175,7 +175,7 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 | 退出码 | 含义 |
 |---|---|
 | `0` | 比较成功完成（无论结论是否兼容；`--fail-on-error` 未开启时“不兼容”也是 0） |
-| `1` | 参数错误：缺少必填项、override 与开关冲突、非法取值、mod JAR 不存在、无意义的比较 |
+| `1` | 参数错误：缺少必填项、override 与开关冲突、非法取值、mod JAR 不存在或不是可读取的 ZIP/JAR、无意义的比较 |
 | `2` | 发现了确定不兼容项，且指定了 `--fail-on-error` |
 | `3` | 网络、元数据/JSON 解析、下载、JarCompat 分析失败 |
 
@@ -192,9 +192,9 @@ src/main/java/xland/ioutils/jarcompat/mods/
 │                                 # Fetcher/HttpFetcher、MetaClient、JarCache、Zips、ModCompatException
 ├── meta/                         # MojangMeta、FabricMeta、NeoForgeMeta、NeoForgeVersions
 ├── env/                          # EnvironmentBuilder、EnvironmentFilter、BuiltEnvironment、EnvironmentVersions
-└── report/                       # ReportJson（把 CheckReport 序列化成 JSON）
 
-src/test/java/...                 # 41 个测试：坐标解析 / URL 拼接 / 库解析 / 版本排序 / 过滤 / CLI / 离线端到端
+src/test/java/...                 # 42 个测试：坐标解析 / URL 拼接 / 库解析 / 版本排序 / 过滤 / CLI /
+                                  # JarCompat JSON 行为 / 离线端到端
 ```
 
 测试全部离线：`ModCompatAppIntegrationTest` 用假的 `Fetcher` 提供元数据与 JAR，覆盖
@@ -223,12 +223,13 @@ src/test/java/...                 # 41 个测试：坐标解析 / URL 拼接 / �
   包括死代码）。想按调用图分析时用 `--reachability entry --entry <类>`。
 * **classpath 冲突策略**：使用 JarCompat 默认的 `FIRST_WINS`（`mcJar → mcLibs → fabricLibs → neoForgeJar → neoForgeLibs` 顺序）。
   同一个类被多个库提供时，只按顺序取第一个。
-* **JarCompat 0.1.3 的 JSON 渲染 bug**：`CheckReport.toJson()` / `JarCompat.render(report, JSON)` 返回的是
-  `JsonStringWriter` 对象的默认 `toString()`（不是 JSON 文本）。`--format json` 因此改由
-  `ReportJson` 基于 JarCompat 的公共报告 API 序列化，字段与其 JSON 报告保持一致；比较逻辑本身不受影响。
-  文本报告 `CheckReport.toText()` 正常。
+* **JSON 报告的来源**：`--format json` 里 `report` 字段就是 JarCompat 渲染的 JSON 文本
+  （`CheckReport.toJson()`，即 `JarCompat.render(report, JSON)`），ModCompat 只是把它解析成对象嵌进外层文档，
+  不做字段级改写；若该文本不是合法 JSON，程序会以退出码 3 明确报错。
+  （历史说明：0.1.3 的这两个方法因为 nanojson `JsonStringWriter` 未覆写 `toString()` 而返回对象字符串，
+  0.1.4 已修复为 `json.done()`；`JarCompatJsonTest` 就是这条行为的回归防线。）
 * **JarCompat 版本显示**：`JarCompat.TOOL_VERSION` 读的是包清单里的 `Implementation-Version`，
-  shadow fat JAR 会丢掉它（退化成 `0.1.0`），所以 `--version` 显示的是本项目固定的常量 `0.1.3`。
+  shadow fat JAR 会丢掉它（退化成 `0.1.0`），所以 `--version` 显示的是本项目固定的常量 `0.1.4`。
 * **缓存不做校验和校验**：缓存命中只检查文件存在且是可读 ZIP；没有比对 sha1。
   若要强制重新下载，删除 `--cache-dir` 下对应文件即可。
 
@@ -236,14 +237,14 @@ src/test/java/...                 # 41 个测试：坐标解析 / URL 拼接 / �
 
 ## 10. 与 JarCompat 的 API 对应关系
 
-| ModCompat | JarCompat 0.1.3 |
+| ModCompat | JarCompat 0.1.4 |
 |---|---|
 | `ModCompatApp.check(...)` | `JarCompat.request()...build()` → `JarCompat.check(CheckRequest)` |
 | `CliOptions.format()` | `ReportFormat.TEXT` / `ReportFormat.JSON` |
 | `CliOptions.reachability()` | `ReachabilityScope.ALL`（默认）/ `ENTRY` |
 | `CheckReport` 的结论与计数 | `verdict()` / `errorCount()` / `warningCount()` / `compatibleReferenceCount()` / `errorsByLibBJar()` 等 |
 | `--format text` 的报告 | `CheckReport.toText()`（`JarCompat.render(report, TEXT)`） |
-| `--format json` 的报告 | JarCompat 公共报告 API → `ReportJson`（绕开 0.1.3 的 `toJson()` bug，见 §9） |
+| `--format json` 的报告 | `CheckReport.toJson()`（即 `JarCompat.render(report, JSON)`）的原样嵌入，不做字段级改写 |
 
 ---
 
@@ -253,7 +254,7 @@ src/test/java/...                 # 41 个测试：坐标解析 / URL 拼接 / �
 放在 `1.21.1 + Fabric` 与 `1.21.4 + Fabric` 之间比较的真实结果：
 
 ```text
-ModCompat 0.1.0 — Minecraft mod 双环境兼容性比较（JarCompat 0.1.3）
+ModCompat 0.1.0 — Minecraft mod 双环境兼容性比较（JarCompat 0.1.4）
 mod JAR   : /path/to/demo-mod.jar
 环境 A    : Minecraft 1.21.1 + Fabric Loader 0.19.5
 环境 B    : Minecraft 1.21.4 + Fabric Loader 0.19.5
@@ -298,15 +299,15 @@ JarCompat — JAR Binary Compatibility Checker
 提示: 加 --fail-on-error 可在存在确定不兼容项时返回退出码 2。
 ```
 
-对应的 JSON（`--format json`，节选）：
+对应的 JSON（`--format json`，节选；`report` 字段就是 JarCompat 自己渲染的报告）：
 
 ```json
 {
   "tool": "ModCompat",
   "toolVersion": "0.1.0",
-  "jarCompatVersion": "0.1.3",
+  "jarCompatVersion": "0.1.4",
   "program": "/path/to/demo-mod.jar",
-  "cacheDir": "/home/user/.cache/modcompat",
+  "cacheDir": "/path/to/cache",
   "reachability": "ALL",
   "environmentA": {
     "minecraft": "1.21.1",
@@ -317,43 +318,83 @@ JarCompat — JAR Binary Compatibility Checker
     "removedDuplicates": 0,
     "coords": ["com.mojang:minecraft:1.21.1", "..."]
   },
-  "environmentB": { "minecraft": "1.21.4", "fabricLoader": "0.19.5", "resourceCount": 49, "...": "..." },
+  "environmentB": { "minecraft": "1.21.4", "fabricLoader": "0.19.5", "neoForge": null,
+                    "resourceCount": 49, "removedSharedWithOtherSide": 73,
+                    "removedDuplicates": 0, "coords": ["..."] },
   "report": {
     "tool": "JarCompat",
+    "formatVersion": 1,
     "reachability": "ALL",
     "verdict": "INCOMPATIBLE",
     "compatible": false,
-    "summary": { "errors": 1, "warnings": 0, "compatibleReferences": 5, "checkedReferences": 6,
-                 "externalReferences": 0, "abstractChecks": 4, "durationMillis": 2137 },
+    "summary": {
+      "errors": 1,
+      "warnings": 0,
+      "compatibleReferences": 5,
+      "checkedReferences": 6,
+      "externalReferences": 0,
+      "abstractChecks": 1,
+      "durationMillis": 2287
+    },
     "errorsByLibBJar": { "joml-1.10.8.jar": 1 },
+    "warningsByLibBJar": {},
+    "notes": ["JarCompat 只做静态链接兼容性检查：不加载、不初始化、不执行任何被分析的类……（共 5 条）"],
     "incompatibilities": [
       {
         "severity": "ERROR",
         "kind": "DESCRIPTOR_CHANGED",
+        "kindLabel": "描述符变化",
         "symbol": "org/joml/Matrix4f.set3x3(Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
         "occurrences": 1,
         "expectedError": "java.lang.NoSuchMethodError",
         "expectedMessage": "java.lang.NoSuchMethodError: 'org.joml.Matrix4f org.joml.Matrix4f.set3x3(org.joml.Matrix4f)'",
-        "locations": [ { "programJar": "demo-mod.jar", "class": "com.example.demo.DemoMod",
-                         "method": "copy3x3", "descriptor": "(Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
-                         "line": 19, "detail": "invokevirtual" } ],
-        "libA": { "present": true, "jar": "joml-1.10.5.jar", "declaration": "..." },
+        "reason": "B 侧沿着 owner 及其父类/父接口都找不到同名且描述符相同的方法。B 中存在同名方法 public org.joml.Matrix4f org.joml.Matrix4f.set3x3(org.joml.Matrix4fc)，但描述符不匹配。……",
+        "suggestion": "在 lib-b 中恢复该方法（参数/返回类型必须与 A 完全一致），或提供一个桥接方法（bridge），或重编译 program。",
+        "locations": [
+          {
+            "programJar": "demo-mod.jar",
+            "class": "com.example.demo.DemoMod",
+            "method": "copy3x3",
+            "descriptor": "(Lorg/joml/Matrix4f;)Lorg/joml/Matrix4f;",
+            "line": 19,
+            "detail": "invokevirtual"
+          }
+        ],
+        "libA": {
+          "present": true,
+          "jar": "joml-1.10.5.jar",
+          "declaration": "public org.joml.Matrix4f org.joml.Matrix4f.set3x3(org.joml.Matrix4f)"
+        },
         "libB": { "present": false, "jar": "joml-1.10.8.jar", "declaration": null }
+      },
+      {
+        "severity": "INFO",
+        "kind": "MULTI_RELEASE",
+        "kindLabel": "多版本 JAR",
+        "symbol": null,
+        "occurrences": 0,
+        "expectedError": null,
+        "expectedMessage": null,
+        "reason": "log4j-core-2.22.1.jar: … 采用 META-INF/versions/9 版本 (运行版本 25)。",
+        "suggestion": null,
+        "locations": [],
+        "libA": null,
+        "libB": null
       }
     ]
   }
 }
 ```
 
-
 ---
 
 ## 12. 验证情况
 
-* `./gradlew test`：**41 个测试全部通过**，且全部离线（用假的 `Fetcher`），不访问任何网络。
+* `./gradlew test`：**42 个测试全部通过**，且全部离线（用假的 `Fetcher`），不访问任何网络。
 * 离线端到端测试：用 `javax.tools.JavaCompiler` 现场编译“两个版本的库 + 针对 A 版编译的 mod”，
-  跑完整流程并断言 `NoSuchMethodError` 结论、退出码、缓存复用、JSON 结构、无意义比较、错误路径等。
+  跑完整流程并断言 `NoSuchMethodError` 结论、退出码、缓存复用、JSON 结构（含 `report` 来自 JarCompat 的
+  `kindLabel` 等字段）、无意义比较、错误路径等；`JarCompatJsonTest` 单独守住 `toJson()` 返回合法 JSON 这条依赖行为。
 * 真实数据验证：`1.21.1 + Fabric 0.19.5` vs `1.21.4 + Fabric 0.19.5` 首次运行下载 82 个构件
   （约 165 MB；两侧同坐标的 73 个构件被过滤，不产生下载），`lib-a` 32239 个类 / `lib-b` 35515 个类，
   比较耗时约 2.3 s；对调用被移除 API 的 mod 报出确定不兼容（`NoSuchMethodError`），
-  `--fail-on-error` 返回退出码 2。
+  `--format json` 的输出可被 `python3 -m json.tool` 正常解析，`--fail-on-error` 返回退出码 2。
