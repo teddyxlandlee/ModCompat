@@ -1,7 +1,3 @@
-以下为优化后的提示词，可直接用于让代码生成模型/开发者实现项目：
-
----
-
 # 任务：实现 Minecraft Mod JAR 双环境兼容性比较 CLI
 
 你是一名 Java 开发者。请实现一个 Java 命令行程序，使用 `xland.ioutils:JarCompat:0.1.3` 提供的 API，比较一个 Minecraft mod JAR 在两个不同 Minecraft 环境下的兼容性。请生成完整可构建项目，包括源码、构建文件（Maven 或 Gradle）和 `README.md`。
@@ -203,7 +199,11 @@ neoForgeLibs = parseLibraries(versionJson.libraries)
 - 错误信息输出到 stderr。
 - 成功比较返回退出码 0；参数错误、网络错误、解析错误、无意义比较等返回非 0，并在 README 中说明。
 
-## 5. README.md
+## 5. 使用库
+
+- JSON parser: 使用`build.gradle.kts`中声明的`nanojson`库用于JSON parsing，禁止自写JSON parser。
+
+## 6. README.md
 
 必须提供 `README.md`，说明：
 - 项目用途；
@@ -214,7 +214,7 @@ neoForgeLibs = parseLibraries(versionJson.libraries)
 - 依赖 `xland.ioutils:JarCompat:0.1.3`；
 - 已知限制，例如需要网络访问 Mojang/Fabric/NeoForge 元数据与 Maven 仓库。
 
-## 6. 验收标准
+## 7. 验收标准
 
 - CLI 参数解析正确，必填项和冲突项校验完整。
 - 能正确获取 Minecraft、Fabric、NeoForge 资源并解析 Maven 坐标。
