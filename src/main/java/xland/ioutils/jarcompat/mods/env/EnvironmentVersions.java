@@ -3,6 +3,7 @@ package xland.ioutils.jarcompat.mods.env;
 import java.util.Objects;
 
 import org.jspecify.annotations.Nullable;
+import xland.ioutils.jarcompat.mods.core.Resource;
 
 /**
  * 一侧环境的版本组合：Minecraft 版本 + 实际启用的 loader 版本（未启用的为 {@code null}）。
@@ -10,13 +11,22 @@ import org.jspecify.annotations.Nullable;
  * @param minecraftVersion     Minecraft 版本，必填
  * @param fabricLoaderVersion  启用的 Fabric Loader 版本，未启用时为 {@code null}
  * @param neoForgeVersion      启用的 NeoForge 版本，未启用时为 {@code null}
+ * @param clientMappings       该版本的官方映射（ProGuard）资源，未启用 remap 时为 {@code null}
  */
 public record EnvironmentVersions(String minecraftVersion,
                                   @Nullable String fabricLoaderVersion,
-                                  @Nullable String neoForgeVersion) {
+                                  @Nullable String neoForgeVersion,
+                                  @Nullable Resource clientMappings) {
 
     public EnvironmentVersions {
         Objects.requireNonNull(minecraftVersion, "minecraftVersion");
+    }
+
+    /** 只要版本三元组时的便捷构造（不需要 remap 的场景，例如测试与 dry-run 展示）。 */
+    public EnvironmentVersions(String minecraftVersion,
+                               @Nullable String fabricLoaderVersion,
+                               @Nullable String neoForgeVersion) {
+        this(minecraftVersion, fabricLoaderVersion, neoForgeVersion, null);
     }
 
     /**

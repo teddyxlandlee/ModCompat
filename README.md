@@ -67,8 +67,8 @@ testCompileOnly("xland.ioutils:JarCompat:0.1.5")
 
 | 产物                                  | 说明                                                                        |
 |---------------------------------------|-----------------------------------------------------------------------------|
-| `build/libs/ModCompat-0.1.0-all.jar`  | **自包含可执行 JAR**（含 JarCompat + ASM + nanojson），`java -jar` 直接运行 |
-| `build/libs/ModCompat-0.1.0.jar`      | 普通库 JAR；作为依赖使用，运行时 classpath 上需要 JarCompat 与 ASM          |
+| `build/libs/ModCompat-0.1.0-all.jar`  | **自包含可执行 JAR**（含 JarCompat + ASM + nanojson + srgutils + tiny-remapper），`java -jar` 直接运行 |
+| `build/libs/ModCompat-0.1.0.jar`      | 普通库 JAR；作为依赖使用，运行时 classpath 上需要上述依赖                    |
 | `build/distributions/*.zip` / `*.tar` | `application` 插件生成的发行包，内含 `bin/modcompat` 启动脚本               |
 
 ---
@@ -264,16 +264,29 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 
 JSON 报告里两侧环境各带三个逐位对应的数组：`coords`、`variants`（无变体为 `null`）、`displayNames`。
 
-### 7.6 `--dry-run` 与当前版本的边界
+### 7.6 remapping 是怎么执行的
 
-`--dry-run` 会把命名空间决策一并打印/输出（`mappings` 对象），便于在下载几百 MB 之前确认目标命名空间。
+决策说得出目标命名空间，程序就会真的把两侧的官方 `client.jar` 映射过去：
 
-> **当前版本的 remapping 引擎尚未接入。** 当决策结果是“需要 remap”时，程序会在 stderr 明确警告
-> （`本版本尚未实现 remapping 引擎`），并在报告的 `mappings` 段里置 `degraded: true` /
-> `mcLayerConclusive: false`，文本报告里则多一行 `结论范围: 仅库层（Minecraft 层未对齐，不可信）`。
-> 也就是说，**原先那条“原版 JAR 是混淆产物、结论只覆盖库层”的限制并没有消失，只是从一句笼统的说明
-> 变成了一个逐次运行、可检查的判定结果**：什么时候受影响、为什么受影响、该加哪个参数，都会在报告里
-> 写清楚。接入 remapper 之后，同一套判定会自动变成“已完成对齐”，报告字段的含义不变。
+| 步骤 | 做什么 |
+|------|--------|
+| 1 | 从版本元数据取 `downloads.client_mappings`（ProGuard 文本）；从 Fabric Maven 取 `net.fabricmc:intermediary:<mc>:v2`（Tiny v2） |
+| 2 | 目标 `mojang`：ProGuard 文件 `reverse()` 成 `official -> mojang`，写成 Tiny v2（srgutils 的 TINY writer 固定写 `left`/`right` 列名，因此表头会被改写成真实命名空间名） |
+| 3 | 目标 `intermediary`：Fabric 的文件本来就是 `official -> intermediary`，直接用 |
+| 4 | tiny-remapper 以 `official -> <target>` 重映射 `client.jar`，classpath 喂该侧全部资源（MC 类大量互相继承，继承成员要靠 classpath 解析） |
+| 5 | 产物落在带变体后缀的缓存路径（`client.jar.mapped-intermediary`），产物文件本身就是缓存，重复运行直接复用 |
+
+两个容易踩的坑，都已实测确认：
+
+* **不能把两份映射反向串成 `mojang -> intermediary`**。那样得到的映射源侧有冲突（`Button/b`、
+  `Checkbox/b`、`CycleButton/b` 会被展开成同一个源），tiny-remapper 直接报
+  `Mapping source name conflicts detected`。而且本项目根本不需要这条链——会被 remap 的只有官方 JAR，
+  它的命名空间永远是 `official`。
+* **NeoForge 的 `:universal` JAR 不需要 remap**。它虽然引用大量 MC 类，但发出来时已经是 Mojang 官方名
+  （实测 21.1.234 的 universal JAR 里 SRG 名 `f_*` / `m_*` 出现 0 次），对目标 `mojang` 而言是恒等操作，
+  因此不打变体、不白跑一遍。
+
+`--dry-run` 会把命名空间决策一并打印/输出（`mappings` 对象），便于在下载之前确认目标命名空间。
 
 ---
 
@@ -312,9 +325,12 @@ src/main/java/xland/ioutils/jarcompat/mods/
 ├── meta/                         # MojangMeta、FabricMeta、NeoForgeMeta、NeoForgeVersions
 ├── env/                          # EnvironmentBuilder、EnvironmentFilter、BuiltEnvironment、
 │                                 # EnvironmentVersions、MappingsRequest、MappingsDecision、MinecraftNamespace
+├── mappings/                     # 执行层：MappingFiles（取映射文件）、MappingSet（official -> 目标）、
+│                                 # JarRemapper / TinyRemapperEngine（tiny-remapper 引擎）、MappingNamespace
 
-src/test/java/...                 # 81 个测试：坐标解析 / URL 拼接 / 库解析 / 版本排序 / 过滤 / CLI /
-                                  # 命名空间检测 / 决策表 / JarCompat JSON 行为 / 离线端到端
+src/test/java/...                 # 88 个测试：坐标解析 / URL 拼接 / 库解析 / 版本排序 / 过滤 / CLI /
+                                  # 命名空间检测 / 决策表 / 映射构建（歧义过滤、列名改写）/
+                                  # 离线端到端（含真实 remap）/ JarCompat JSON 行为
 ```
 
 测试全部离线：`ModCompatAppIntegrationTest` 用假的 `Fetcher` 提供元数据与 JAR，覆盖
@@ -332,16 +348,15 @@ src/test/java/...                 # 81 个测试：坐标解析 / URL 拼接 / �
 * **元数据没有规则过滤**：`parseLibraries` 按 `DEV_GUIDE.md` 的规则收录 `libraries` 里的全部条目
   （不做 `rules` 的 OS/feature 过滤），因此其它平台的 natives 也会被下载并进入 lib-a/lib-b；
   它们不会与 mod 的引用冲突，只是增加下载量。
-* **remapping 引擎尚未接入（当前版本最大的限制）**：命名空间决策、资源变体、缓存键与报告字段都已就位
-  （见 [§7](#7-命名空间映射处理)），但真正改写字节码的那一步还没做。官方 `client.jar` 在 `1.x` 上仍然是
-  混淆产物，因此当决策结果是“需要 remap”时：
-  * 程序在 stderr 明确警告 `本版本尚未实现 remapping 引擎`；
-  * 报告的 `mappings` 段里 `degraded: true`、`mcLayerConclusive: false`；
-  * mod 对 `net.minecraft.*` 的引用在两侧都解析不到，会被 JarCompat 记为“外部（未提供）引用”并跳过，
-    **Minecraft 层的“未发现问题”是假阴性**，只应参考库层（gson、guava、netty、log4j、asm……）。
-
-  决策结果为“无需 remap”时（`>= 26.x`、mod 本来就用官方名、或 mod 根本没有 MC 引用）不受影响，
-  `mcLayerConclusive` 为 `true`。
+* **只 remap 官方 `client.jar`**：会被重新映射的只有 `com.mojang:minecraft:<mc>` 这个构件。Fabric/NeoForge
+  的 mod 是按各自命名空间编译的，但上游环境里只有原版 JAR 需要对齐；NeoForge 的 `:universal` 与
+  Fabric Loader 的库要么已是 Mojang 名、要么不含 MC 类。
+* **`>= 26.x` 上不支持 `--mappings intermediary`**：那些版本的官方 JAR 已经是 Mojang 可读名，而本工具
+  只有 `official -> intermediary` 一条链，缺 `mojang -> intermediary` 那一跳。该组合会如实降级为只比库层
+  （用默认的 `auto` 即可——两侧都 `>= 26.x` 时本来就不需要映射）。
+* **remap 依赖官方映射的覆盖面**：ProGuard 映射只覆盖 Mojang 自己发布的类，第三方库（gson、netty、
+  lwjgl……）不在其中。这是正确的——它们本来就不该被改名；但这也意味着 remap 后的 JAR 里仍会看到这些库的
+  原始类名，属于预期行为。
 * **命名空间检测的证据下限**：`ModNamespaceDetector` 用“可读类名 ∈ 混淆保留名单之外”作证据，
   阈值 8 条（见 §7.4）。只引用了个位数 Minecraft 类的极小 mod 会判成 `unknown`，此时程序只比库层
   并给出提示；用 `--mappings mojang` / `--mappings intermediary` 可以显式覆盖。
@@ -393,7 +408,7 @@ ModCompat 0.1.0 — Minecraft mod 双环境兼容性比较（JarCompat 0.1.5）
 mod JAR   : /path/to/demo-mod.jar
 环境 A    : Minecraft 1.21.1 + Fabric Loader 0.19.5
 环境 B    : Minecraft 1.21.4 + Fabric Loader 0.19.5
-映射      : auto -> intermediary（mod: intermediary，需 remap mapped-intermediary；仅库层结论）
+映射      : auto -> intermediary（mod: intermediary，需 remap mapped-intermediary；结论含 Minecraft 层）
 缓存目录  : /home/user/.cache/modcompat
 lib-a     : 106 个上游资源 -> 保留 33 个（过滤掉另一侧同坐标 73 个，本侧重复坐标 0 个）
 lib-b     : 122 个上游资源 -> 保留 49 个（过滤掉另一侧同坐标 73 个，本侧重复坐标 0 个）
@@ -452,11 +467,11 @@ JarCompat — JAR Binary Compatibility Checker
     "targetNamespace": "intermediary",
     "remapNeeded": true,
     "variant": "mapped-intermediary",
-    "degraded": true,
+    "degraded": false,
     "loaderHeuristic": false,
-    "mcLayerConclusive": false,
-    "warnings": ["本版本尚未实现 remapping 引擎：两侧上游资源将保持官方（1.x 上为混淆名）原名，Minecraft 层的结论不可信，只应参考库层"],
-    "notes": ["mod 是 intermediary，唯一启用的 loader 是 --fabric：原版 JAR 需要反混淆后重新映射到 intermediary"],
+    "mcLayerConclusive": true,
+    "warnings": [],
+    "notes": ["mod 是 intermediary，唯一启用的 loader 是 --fabric（运行时就是 intermediary）：原版 JAR 需要反混淆后重新映射到 intermediary，与 mod 自洽"],
     "minecraftClassesA": 8269,
     "minecraftClassesB": 8312
   },
@@ -544,7 +559,7 @@ JarCompat — JAR Binary Compatibility Checker
 
 ## 13. 验证情况
 
-* `./gradlew test`：**81 个测试全部通过**，且全部离线（用假的 `Fetcher`），不访问任何网络。
+* `./gradlew test`：**88 个测试全部通过**，且全部离线（用假的 `Fetcher`），不访问任何网络。
 * 离线端到端测试：用 `javax.tools.JavaCompiler` 现场编译“两个版本的库 + 针对 A 版编译的 mod”，
   跑完整流程并断言 `NoSuchMethodError` 结论、退出码、缓存复用、JSON 结构（含 `report` 来自 JarCompat 的
   `kindLabel` 等字段）、无意义比较、命名空间决策（含 remap 降级与 `--mappings` 非法取值）、错误路径等；
@@ -568,3 +583,17 @@ JarCompat — JAR Binary Compatibility Checker
   正是这轮校准推翻了最初“命中地标类名即判 MOJANG”的写法——它把**混淆的** 1.21.1 `client.jar`
   判成了 `mojang`（`ModNamespaceDetectorTest#obfuscatedBootstrapNamesAreNotEvidence` 是它的回归防线）。
   扫描一整份未混淆的 `client.jar`（约 1 万个类）耗时约 0.5 s，mod JAR 通常只需几十毫秒。
+* 映射链与 remapping 同样对着**真实数据**验证过（下载 1.21.1 的 `client_mappings` 与
+  `intermediary-1.21.1-v2`，把真实的 26 MB `client.jar` 映射出去）：
+
+  | 检查项 | 结果 |
+  |--------|------|
+  | ProGuard 方向 | 是 `mojang -> official`（`net.minecraft.client.Minecraft -> fgo`），必须 `reverse()` |
+  | 反向串联 `mojang -> intermediary` | **不可用**：源侧冲突（`Button/b`、`Checkbox/b`…），tiny-remapper 报 `Mapping source name conflicts detected` |
+  | Fabric intermediary 文件 | 已是 `official -> intermediary`，直接用 |
+  | `official -> intermediary` 重映射 1.21.1 client.jar | 8269 个类 / 4.1 s，产出 `net/minecraft/class_310.class`（`extends class_4093`、字段 `field_1700`、方法 `method_53465`） |
+  | 全量审计（8269 个类、111338 个成员） | 只剩 26 个 `net/minecraft` 类型的名字不符合 intermediary 约定——正是混淆器保留的 `Main` / `MinecraftServer` / `ClientBrandRetriever` / JFR 事件类 |
+  | `mojang` 目标（`official -> mojang`） | **首次尝试就炸了**：ProGuard 的方法混淆名不唯一（`c()V` 出现在成百上千个类上），反向之后变成“同一源、多个目标”，tiny-remapper 抛 `Unfixable conflicts` |
+  | 解决方式 | 构建映射前丢掉这类有歧义的成员映射。这些成员本来就<b>没有唯一解</b>，“不改名”是安全选择；类名/字段名/绝大多数方法名照常映射（`MappingSetTest` 是它的回归防线） |
+  | 端到端真实运行（1.21.1 vs 1.21.4 + Fabric，mod 用 intermediary） | `mcLayerConclusive: true`，`结论范围: 库层 + Minecraft 层`，**411012 条 MC 引用被解析**、1030 项确定不兼容（此前 MC 引用全部落进“外部引用”被跳过） |
+  | 端到端真实运行（同一 mod + NeoForge，目标 mojang） | 同样 `结论含 Minecraft 层`，24422 条 MC 引用被解析；两条命名空间链都能跑通 |

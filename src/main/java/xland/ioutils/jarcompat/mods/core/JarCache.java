@@ -6,12 +6,16 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
 
 import org.jspecify.annotations.Nullable;
+import xland.ioutils.jarcompat.mods.mappings.JarRemapper;
+import xland.ioutils.jarcompat.mods.mappings.MappingNamespace;
 
 /**
  * JAR 下载缓存：把 {@link Resource} 落到本地文件，供 {@code JarCompat.check(...)} 以 {@code Path} 读取。
@@ -69,8 +73,10 @@ public final class JarCache {
      *
      * <p>变体参与缓存键：同一份 {@code client.jar} 被 remap 成 mojang 与 intermediary 是两份不同的
      * 产物，缓存目录（按 URL 的 SHA-1 分目录）里也必须是两个文件，文件名上带 {@code .<变体>} 后缀，
-     * 这样报告里仍然一眼能看出它来自哪个构件。真正的 remapping 落在这一步与下载之间
-     * （见 {@code MappingsDecision}）；本版本尚未实现 remapper，因此变体只影响路径。</p>
+     * 这样报告里仍然一眼能看出它来自哪个构件。</p>
+     *
+     * <p>这个方法<b>不</b>做 remap，只负责把原始构件下载下来；需要改名的资源走
+     * {@link #fetchRemapped}。</p>
      *
      * @param resource 资源（其 {@link Resource#variant()} 被忽略，变体由参数显式给出）
      * @param variant  命名空间变体，可为 {@code null}
@@ -82,6 +88,67 @@ public final class JarCache {
             reused++;
             return target;
         }
+        byte[] content = download(resource, target);
+        store(content, target);
+        downloaded++;
+        return target;
+    }
+
+    /**
+     * 返回资源在指定命名空间变体下的本地产物路径，必要时先重新映射命名空间。
+     *
+     * <p>下载下来的是官方 JAR（{@code official} 命名空间），随后交给 {@code remapper} 映射成
+     * {@code targetNamespace}，产物落在带变体后缀的路径上。产物文件本身就是缓存：已存在且可读时
+     * 直接复用，不会重复 remap。</p>
+     *
+     * @param resource        资源
+     * @param variant         变体名（带变体的资源必须给出）
+     * @param targetNamespace remap 的目标命名空间
+     * @param mappings        {@code official -> targetNamespace} 的 Tiny v2 映射文件
+     * @param classpath       remap 用的 classpath（通常是同一侧的全部资源）
+     * @param remapper        remap 引擎
+     */
+    public Path fetchRemapped(Resource resource, String variant,
+                              MappingNamespace targetNamespace, Path mappings,
+                              List<Resource> classpath, JarRemapper remapper) throws IOException {
+        Objects.requireNonNull(resource, "resource");
+        Objects.requireNonNull(variant, "variant");
+        Path target = localPath(resource, variant);
+        if (isUsable(target)) {
+            reused++;
+            return target;
+        }
+
+        // remap 的输入是原始构件：先确保它在缓存里
+        Path raw = localPath(resource);
+        if (isUsable(raw)) {
+            reused++;
+        } else {
+            byte[] content = download(resource, target);
+            store(content, raw);
+            downloaded++;
+        }
+
+        // classpath 不能包含待 remap 的自己：tiny-remapper 会把它当成“已在 classpath 上的同名类”
+        List<Path> paths = new ArrayList<>(classpath.size());
+        for (Resource entry : classpath) {
+            if (entry.coords().equals(resource.coords())) {
+                continue;
+            }
+            Path path = entry.variant() == null ? localPath(entry) : localPath(entry, entry.variant());
+            if (isUsable(path)) {
+                paths.add(path);
+            }
+        }
+
+        if (progress != null) {
+            progress.accept("重新映射 " + target.getFileName() + "（official -> " + targetNamespace + "）");
+        }
+        return remapper.remap(raw, target, targetNamespace, mappings, paths);
+    }
+
+    /** 下载并做基本校验。 */
+    private byte[] download(Resource resource, Path target) throws IOException {
         Files.createDirectories(target.getParent());
         if (progress != null) {
             progress.accept("下载 " + target.getFileName() + "  <- " + resource.displayName());
@@ -90,15 +157,18 @@ public final class JarCache {
         if (content.length == 0) {  // implicit null check
             throw new IOException("下载内容为空: " + resource.url());
         }
+        return content;
+    }
+
+    /** 原子写入并校验产物确实是可读 ZIP。 */
+    private static void store(byte[] content, Path target) throws IOException {
         Path temp = target.resolveSibling(target.getFileName() + ".part");
         Files.write(temp, content);
         if (!isUsable(temp)) {
             Files.deleteIfExists(temp);
-            throw new IOException("下载内容不是有效的 JAR/ZIP: " + resource.url());
+            throw new IOException("产物不是有效的 JAR/ZIP: " + target.getFileName());
         }
         move(temp, target);
-        downloaded++;
-        return target;
     }
 
     /** 资源在缓存中的目标路径（不触发下载）。 */

@@ -81,7 +81,11 @@ public final class EnvironmentBuilder {
                 byte[] installer = client.bytes(neoForge.installerUrl(neoVersion));
                 resources.addAll(neoForge.libraries(installer));
             }
-            return new BuiltEnvironment(new EnvironmentVersions(mcVersion, fabricVersion, neoVersion),
+            // 官方映射只在真的要 remap 时才需要下载，所以这里只准备资源描述
+            xland.ioutils.jarcompat.mods.core.Resource clientMappings =
+                    mappings.remapNeeded() ? mojang.clientMappings(mcVersion, versionMeta) : null;
+            return new BuiltEnvironment(
+                    new EnvironmentVersions(mcVersion, fabricVersion, neoVersion, clientMappings),
                     mappings.tag(resources));
         } catch (ModCompatException e) {
             throw new ModCompatException("环境 " + label + "（Minecraft " + mcVersion + "）: " + e.getMessage(), e);

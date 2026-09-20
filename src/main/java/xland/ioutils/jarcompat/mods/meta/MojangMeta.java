@@ -76,6 +76,26 @@ public final class MojangMeta {
         return new Resource(url, "com.mojang:minecraft:" + mcVersion);
     }
 
+    /**
+     * 官方 mappings（ProGuard 文本），坐标为
+     * {@code com.mojang:minecraft:<mcVersion>:client_mappings}。
+     *
+     * <p>这是 remap 官方 JAR 的<b>唯一</b>数据源：{@code 26.1} 之前官方 JAR 是混淆产物，而这份文件
+     * 给的是 {@code mojang -> official}（左边可读名、右边混淆名），反向用即可。</p>
+     *
+     * @throws ModCompatException 该版本的元数据里没有 {@code downloads.client_mappings}
+     */
+    public Resource clientMappings(String mcVersion, JsonObject versionMeta) {
+        JsonObject downloads = versionMeta.getObject("downloads");
+        JsonObject mappings = downloads == null ? null : downloads.getObject("client_mappings");
+        String url = mappings == null ? null : mappings.getString("url");
+        if (url == null || url.isBlank()) {
+            throw new ModCompatException("Minecraft " + mcVersion
+                    + " 的版本元数据缺少 downloads.client_mappings.url（官方映射），无法反混淆");
+        }
+        return new Resource(url, "com.mojang:minecraft:" + mcVersion + ":client_mappings");
+    }
+
     /** 版本元数据里的库列表。 */
     public List<Resource> libraries(JsonObject versionMeta) {
         return LibraryParser.parseLibraries(versionMeta.getArray("libraries"));

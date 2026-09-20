@@ -28,7 +28,7 @@ import xland.ioutils.jarcompat.mods.core.Resource;
  * @param modNamespace      mod JAR 自身的命名空间检测结果
  * @param targetNamespace   两侧资源要被对齐到的命名空间（只有 {@code mojang} 与 {@code intermediary}
  *                          两种可能——官方名是 remap 的起点而不是目标）；{@code null} 表示不做任何对齐
- * @param remapNeeded       是否需要对上游资源做实际 remap（{@code true} 时本版本尚未实现，见 {@link #degraded()}）
+ * @param remapNeeded       是否需要对上游资源做实际 remap（两侧的官方 JAR 会被重新映射到目标命名空间）
  * @param mcLayerConclusive 本次比较能否对 Minecraft 层下结论
  * @param fabric            本次是否启用了 Fabric（仅用于 {@link #loaderHeuristic()} 的说明）
  * @param warnings          需要展示给用户的提示
@@ -66,13 +66,14 @@ public record MappingsDecision(MappingsMode requestedMode,
     }
 
     /**
-     * 本版本是否降级运行。
+     * 本版本是否降级运行：即“这个决策没能按计划执行完”，因此 Minecraft 层的结论不可信。
      *
-     * <p>{@code true} 表示“按决策本该 remap，但实际没有做”（本版本尚未实现 remapping 引擎），
-     * 或者“本该对齐却做不到”，此时 Minecraft 层的结论不可信，必须在报告里说清楚。</p>
+     * <p>等价于 {@code !mcLayerConclusive}。注意 {@link #remapNeeded()} <b>不</b>等于降级——
+     * remapping 引擎已经接入，只要决策说得出目标命名空间，就会真的把官方 JAR 映射过去；
+     * 万一运行期失败，程序会以退出码 3 报错，而不是悄悄退化成“只比库层”。</p>
      */
     public boolean degraded() {
-        return remapNeeded || !mcLayerConclusive;
+        return !mcLayerConclusive;
     }
 
     /** 目标命名空间对应的资源变体名；不需要对齐时为 {@code null}。 */
@@ -118,9 +119,15 @@ public record MappingsDecision(MappingsMode requestedMode,
     /**
      * 把一侧的上游资源打上变体标记。
      *
-     * <p>只有真正承载 Minecraft 代码、且会被 remap 的资源才有变体：官方 {@code client.jar} 与
-     * NeoForge 的 {@code :universal} JAR。纯库（gson、netty……）与 Fabric Loader 的库字节码里
+     * <p>只有<b>确实需要改名、而且真的在那个命名空间里</b>的资源才有变体：官方 {@code client.jar}
+     * 在 {@code 1.x} 上是混淆产物，必须 remap。纯库（gson、netty……）与 Fabric Loader 的库字节码里
      * 没有 {@code net.minecraft.*}，不需要变体。</p>
+     *
+     * <p>NeoForge 的 {@code :universal} JAR 虽然承载 Minecraft 代码（它引用大量 MC 类），但发出来时
+     * <b>已经在 Mojang 官方命名空间里</b>——实测 21.1.234 的 universal JAR 里 SRG 名
+     * {@code f_*} / {@code m_*} 出现 0 次。目标就是 mojang 时对它做一次“remap”纯粹是白跑，
+     * 打上 {@code mapped-mojang} 变体还会让人误以为改写过字节码，因此这里按“是否真的需要改名”判断，
+     * 而不是按“是否承载 MC 代码”。</p>
      *
      * <p>{@link Resource#coords()}（基础身份）保持不变，因此两侧的“同一个构件”仍然按坐标过滤；
      * 变体只影响缓存键与报告。</p>
@@ -133,12 +140,22 @@ public record MappingsDecision(MappingsMode requestedMode,
         }
         List<Resource> tagged = new ArrayList<>(resources.size());
         for (Resource resource : resources) {
-            tagged.add(isMinecraftBearing(resource) ? resource.withVariant(variant) : resource);
+            tagged.add(needsRemap(resource) ? resource.withVariant(variant) : resource);
         }
         return List.copyOf(tagged);
     }
 
-    /** 该资源是否承载 Minecraft 代码（因此 remap 时会换一套类名）。 */
+    /**
+     * 该资源是否需要（且能够）被 remap。
+     *
+     * <p>只有官方 {@code client.jar} 需要：它随版本下载下来就在 {@code official} 命名空间里，
+     * 而目标永远是 {@code mojang} 或 {@code intermediary}。</p>
+     */
+    public static boolean needsRemap(Resource resource) {
+        return resource.coords().startsWith(MINECRAFT_COORDS_PREFIX);
+    }
+
+    /** 该资源是否承载 Minecraft 代码（用于报告与说明，不代表需要 remap）。 */
     public static boolean isMinecraftBearing(Resource resource) {
         String coords = resource.coords();
         if (coords.startsWith(MINECRAFT_COORDS_PREFIX)) {
@@ -241,17 +258,13 @@ public record MappingsDecision(MappingsMode requestedMode,
     /** {@code --mappings intermediary}：对齐到 Fabric 的 intermediary。 */
     private static MappingsDecision decideIntermediary(MappingsRequest request) {
         // 走到这里时两侧都是 >= 26.x（1.x 与跨代的情况已在 evaluate 里处理掉）
-        MinecraftNamespace target = MinecraftNamespace.INTERMEDIARY;
         NamespaceKind kind = request.modNamespace().namespace();
-        if (kind == NamespaceKind.INTERMEDIARY) {
-            return aligned(request, target, List.of(), List.of("mod 已经是 intermediary，上游无需 remap"));
-        }
-        if (kind == NamespaceKind.MOJANG) {
-            return remap(request, target, List.of(),
-                    List.of("mod 是具名映射，而 >= " + MinecraftVersion.FIRST_UNOBFUSCATED_MAJOR
-                            + ".x 的官方 JAR 本来就是未混淆的官方名：对齐到 intermediary 需要 official -> intermediary 的映射"));
-        }
-        return unsupportedLoader(request, target, kind);
+        // >= 26.x 的官方 JAR 已经是 Mojang 可读名，而本工具只有 official -> intermediary 一条链，
+        // 缺 mojang -> intermediary 那一跳，因此这个组合做不到，如实降级。
+        return unfixable(request, "--mappings intermediary 在 Minecraft " + request.mcVersionA()
+                + " / " + request.mcVersionB() + " 上不可用：该版本的官方 JAR 已经是 Mojang 可读名，"
+                + "而 intermediary 只能从混淆名（official）映射过去，缺少 mojang -> intermediary 这一跳"
+                + (kind == NamespaceKind.INTERMEDIARY ? "（mod 本身已经是 intermediary，若两侧都是 >= 26.x 则本来就不需要映射，用 auto 即可）" : ""));
     }
 
     /** {@code --mappings auto}：按版本代际与 loader 推导。 */
@@ -333,19 +346,20 @@ public record MappingsDecision(MappingsMode requestedMode,
         return remap(request, target, List.of(), List.of(why));
     }
 
-    /** 需要实际 remap。 */
+    /**
+     * 需要实际 remap：把两侧的官方 JAR 对齐到 {@code target}。
+     *
+     * <p>这是可完成的决策，因此 {@code mcLayerConclusive = true}——remapping 引擎已经接入
+     * （srgutils 读/合成映射 + tiny-remapper 改写字节码）。如果 remap 在运行期失败，程序会以
+     * 退出码 3 明确报错，而不是悄悄退化成“只比库层”。</p>
+     */
     private static MappingsDecision remap(MappingsRequest request, MinecraftNamespace target,
                                           List<String> warnings, List<String> notes) {
-        List<String> allWarnings = new ArrayList<>(warnings);
-        allWarnings.add("本版本尚未实现 remapping 引擎：两侧上游资源将保持官方（"
-                + (MinecraftVersion.isObfuscated(request.mcVersionA())
-                || MinecraftVersion.isObfuscated(request.mcVersionB()) ? "1.x 上为混淆名" : "未混淆名")
-                + "）原名，Minecraft 层的结论不可信，只应参考库层");
         List<String> allNotes = new ArrayList<>(notes);
-        allNotes.add("目标命名空间 " + target.label() + "（变体 " + variantOf(target) + "）；remap 需要映射链 "
-                + request.modNamespace().namespace().name().toLowerCase(Locale.ROOT) + " <- official（本版本未执行）");
-        return new MappingsDecision(request.mode(), request.modNamespace(), target, true, false, request.fabric(),
-                allWarnings, allNotes);
+        allNotes.add("目标命名空间 " + target.label() + "（变体 " + variantOf(target) + "）；"
+                + "两侧的官方 client.jar 会从 official 重新映射到 " + target.label());
+        return new MappingsDecision(request.mode(), request.modNamespace(), target, true, true, request.fabric(),
+                warnings, allNotes);
     }
 
     /** 已经对齐，不需要 remap。 */

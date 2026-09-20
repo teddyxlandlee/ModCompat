@@ -6,8 +6,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 import com.grack.nanojson.JsonArray;
@@ -32,6 +34,7 @@ import xland.ioutils.jarcompat.mods.core.HttpFetcher;
 import xland.ioutils.jarcompat.mods.core.JarCache;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.core.MinecraftLayerProbe;
+import xland.ioutils.jarcompat.mods.core.MinecraftVersion;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
 import xland.ioutils.jarcompat.mods.core.Resource;
 import xland.ioutils.jarcompat.mods.core.Zips;
@@ -40,6 +43,11 @@ import xland.ioutils.jarcompat.mods.env.EnvironmentBuilder;
 import xland.ioutils.jarcompat.mods.env.EnvironmentFilter;
 import xland.ioutils.jarcompat.mods.env.MappingsDecision;
 import xland.ioutils.jarcompat.mods.env.MappingsRequest;
+import xland.ioutils.jarcompat.mods.mappings.JarRemapper;
+import xland.ioutils.jarcompat.mods.mappings.MappingFiles;
+import xland.ioutils.jarcompat.mods.mappings.MappingNamespace;
+import xland.ioutils.jarcompat.mods.mappings.MappingSet;
+import xland.ioutils.jarcompat.mods.mappings.TinyRemapperEngine;
 
 /**
  * ModCompat 主流程：解析参数 → 构建两侧环境 → 过滤同坐标资源 → 下载 JAR → 调用 JarCompat → 输出报告。
@@ -196,8 +204,8 @@ public final class ModCompatApp {
 
             JarCache cache = new JarCache(options.cacheDir(), fetcher,
                     message -> err.println("  " + message));
-            List<Path> libAPaths = localize(cache, "A", libA.resources());
-            List<Path> libBPaths = localize(cache, "B", libB.resources());
+            List<Path> libAPaths = localize(cache, "A", libA.resources(), environmentA, mappings);
+            List<Path> libBPaths = localize(cache, "B", libB.resources(), environmentB, mappings);
             err.println("资源就绪: 新下载 " + cache.downloadedCount() + " 个，复用缓存 "
                     + cache.reusedCount() + " 个（缓存目录 " + cache.root() + "）");
 
@@ -240,18 +248,82 @@ public final class ModCompatApp {
         return JarCompat.check(request.build());
     }
 
-    /** 下载（或复用缓存）一侧的全部资源，保持 classpath 顺序。 */
-    private List<Path> localize(JarCache cache, String side, List<Resource> resources) {
-        List<Path> paths = new ArrayList<>(resources.size());
+    /**
+     * 把一侧的资源落到本地，保持 classpath 顺序；需要 remap 的资源在这里对齐命名空间。
+     *
+     * <p>顺序很重要：remap 需要完整 classpath（Minecraft 的类大量互相继承，继承来的成员要靠
+     * classpath 才能解析），所以先把该侧<b>全部</b>资源下载到本地，再对带变体的资源做 remap。</p>
+     *
+     * <p>跳过的资源：被同坐标过滤移出本侧列表、但已经在本地缓存（例如另一侧下过）的那些，
+     * 它们只作为 classpath 补充，不进入 lib-a/lib-b。</p>
+     */
+    private List<Path> localize(JarCache cache, String side, List<Resource> resources,
+                                BuiltEnvironment environment, MappingsDecision mappings) {
+        // 第一阶段：下载原始构件（这一步不 remap，产物路径与之前一致）
+        List<Path> raw = new ArrayList<>(resources.size());
+        Map<String, Path> byCoords = new LinkedHashMap<>();
         for (Resource resource : resources) {
             try {
-                paths.add(cache.fetch(resource, resource.variant()));
+                Path path = cache.fetch(resource);
+                raw.add(path);
+                byCoords.put(resource.coords(), path);
             } catch (IOException e) {
                 throw new ModCompatException("环境 " + side + " 的资源 " + resource.displayName()
                         + " 下载失败: " + e.getMessage(), e);
             }
         }
+
+        boolean anyRemap = resources.stream().anyMatch(r -> r.variant() != null);
+        if (!anyRemap) {
+            return raw;
+        }
+
+        // 第二阶段：准备映射文件，再逐个 remap 带变体的资源
+        MappingFiles files = new MappingFiles(cache, fetcher);
+        Path mappingsFile = prepareMappings(cache, files, environment, mappings,
+                MappingNamespace.of(Objects.requireNonNull(mappings.targetNamespace()).label()));
+        JarRemapper remapper = new TinyRemapperEngine();
+
+        List<Path> paths = new ArrayList<>(resources.size());
+        for (Resource resource : resources) {
+            if (resource.variant() == null) {
+                paths.add(byCoords.get(resource.coords()));
+                continue;
+            }
+            try {
+                // 两侧都可能需要同一份官方映射（同版本时），复用同一个 MappingSet 的成本很低
+                paths.add(cache.fetchRemapped(resource, resource.variant(),
+                        MappingNamespace.of(mappings.targetNamespace().label()), mappingsFile,
+                        resources, remapper));
+            } catch (IOException e) {
+                throw new ModCompatException("环境 " + side + " 的资源 " + resource.displayName()
+                        + " 重新映射失败: " + e.getMessage(), e);
+            }
+        }
         return paths;
+    }
+
+    /** 取得（必要时合成并缓存）{@code official -> target} 的 Tiny v2 映射文件。 */
+    private Path prepareMappings(JarCache cache, MappingFiles files, BuiltEnvironment environment,
+                                 MappingsDecision mappings, MappingNamespace target) {
+        String mcVersion = environment.versions().minecraftVersion();
+        Resource clientMappings = environment.versions().clientMappings();
+        if (clientMappings == null) {
+            throw new ModCompatException("内部错误: 环境 " + mcVersion + " 需要 remap 但没有官方映射资源");
+        }
+
+        boolean needsIntermediary = target == MappingNamespace.INTERMEDIARY;
+        if (!needsIntermediary && !MinecraftVersion.isObfuscated(mcVersion)) {
+            // 未混淆的版本本来就是可读名，官方映射在这里是恒等操作
+            throw new ModCompatException("内部错误: Minecraft " + mcVersion + " 不需要 remap");
+        }
+
+        Path mojang = files.mojangMappings(mcVersion, clientMappings.url());
+        Path intermediary = needsIntermediary ? files.intermediaryMappings(mcVersion) : null;
+        MappingSet set = new MappingSet(files.mappingsDir(), mojang, intermediary);
+        err.println("  映射就绪: Minecraft " + mcVersion + " -> " + target
+                + "（官方映射 + " + (needsIntermediary ? "intermediary" : "无 intermediary") + "）");
+        return set.tinyFor(target);
     }
 
     private void printEnvironmentHeader(PrintStream target, BuiltEnvironment a, BuiltEnvironment b,

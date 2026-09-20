@@ -38,6 +38,7 @@ import xland.ioutils.jarcompat.mods.core.Fetcher;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
 import xland.ioutils.jarcompat.mods.core.ModNamespaceDetector;
 import xland.ioutils.jarcompat.mods.core.ModNamespaceDetector.NamespaceKind;
+import xland.ioutils.jarcompat.mods.mappings.MappingFiles;
 import xland.ioutils.jarcompat.mods.meta.FabricMeta;
 import xland.ioutils.jarcompat.mods.meta.MojangMeta;
 import xland.ioutils.jarcompat.mods.meta.NeoForgeMeta;
@@ -150,7 +151,12 @@ class ModCompatAppIntegrationTest {
         return JsonWriter.string(root);
     }
 
-    /** 构造版本元数据；每个库用 {@code coords|url} 表示，url 为 {@code -} 时改用 {@code entry.url} 形式。 */
+    /**
+     * 构造版本元数据；每个库用 {@code coords|url} 表示，url 为 {@code -} 时改用 {@code entry.url} 形式。
+     *
+     * <p>同时给出 {@code downloads.client_mappings}：需要 remap 的用例会让程序去下载这份官方映射。
+     * 不需要 remap 的用例不会碰它。</p>
+     */
     private static String versionMeta(String id, String clientUrl, String... libraries) {
         JsonArray array = new JsonArray();
         for (String library : libraries) {
@@ -170,8 +176,11 @@ class ModCompatAppIntegrationTest {
         }
         JsonObject client = new JsonObject();
         client.put("url", clientUrl);
+        JsonObject clientMappings = new JsonObject();
+        clientMappings.put("url", "https://fake/mappings/" + id + "-client.txt");
         JsonObject downloads = new JsonObject();
         downloads.put("client", client);
+        downloads.put("client_mappings", clientMappings);
         JsonObject root = new JsonObject();
         root.put("id", id);
         root.put("downloads", downloads);
@@ -331,8 +340,8 @@ class ModCompatAppIntegrationTest {
     }
 
     @Test
-    @DisplayName("端到端：intermediary mod + --fabric 触发 remap 降级，并给出明确警告")
-    void degradesWhenRemapIsRequired() throws Exception {
+    @DisplayName("端到端：intermediary mod + --fabric 会真的把官方 client.jar remap 到 intermediary")
+    void remapsUpstreamClientJarToIntermediary() throws Exception {
         Path mod = compileJar("intermediary-mod", "mod.ExampleMod", """
                 package mod;
                 public class ExampleMod {
@@ -348,6 +357,15 @@ class ModCompatAppIntegrationTest {
         assertEquals(NamespaceKind.INTERMEDIARY, ModNamespaceDetector.detect(mod).namespace(),
                 "测试用的 mod JAR 应当被判成 intermediary");
 
+        // 伪造“官方混淆 client.jar + 官方映射 + intermediary 映射”，让 remap 路径完全离线跑通
+        String obf = "net/minecraft/fgo";                       // jar 里真实的混淆名（含包路径）
+        String readable = "net.minecraft.client.Minecraft";     // Mojang 官方名（ProGuard 的源）
+        byte[] clientJar = singleClassJar(obf);
+        String proguard = "# 伪 ProGuard 映射\n" + readable + " -> " + obf + ":\n";
+        byte[] intermediaryJar = intermediaryMappingJar(
+                "tiny\t2\t0\tofficial\tintermediary\n"
+                        + "c\t" + obf + "\tnet/minecraft/class_310\n");
+
         MapFetcher fetcher = new MapFetcher()
                 .put(MojangMeta.VERSION_MANIFEST_URL, manifest("1.0", "1.1"))
                 .put("https://fake/meta/1.0.json", versionMeta("1.0", "https://fake/client-1.0.jar"))
@@ -356,17 +374,99 @@ class ModCompatAppIntegrationTest {
                 .put(fabricLoaderListUrl("1.1"), fabricVersions("0.19.6"))
                 .put(fabricProfileUrl("1.0", "0.19.5"), fabricProfile("0.19.5"))
                 .put(fabricProfileUrl("1.1", "0.19.6"), fabricProfile("0.19.6"))
-                .put("https://fake/client-1.0.jar", new byte[] {1})
-                .put("https://fake/client-1.1.jar", new byte[] {1});
+                .put("https://fake/client-1.0.jar", clientJar)
+                .put("https://fake/client-1.1.jar", clientJar)
+                .put("https://fake/mappings/1.0-client.txt", proguard)
+                .put("https://fake/mappings/1.1-client.txt", proguard)
+                .put(MappingFiles.intermediaryUrl("1.0"), intermediaryJar)
+                .put(MappingFiles.intermediaryUrl("1.1"), intermediaryJar)
+                // Fabric Loader 自身的库（fabricProfile 用 entry.url 拼出这个地址）
+                .put("https://fake-maven/net/fabricmc/fabric-loader/0.19.5/fabric-loader-0.19.5.jar",
+                        singleClassJar("net/fabricmc/loader/impl/Launcher"))
+                .put("https://fake-maven/net/fabricmc/fabric-loader/0.19.6/fabric-loader-0.19.6.jar",
+                        singleClassJar("net/fabricmc/loader/impl/Launcher"));
 
+        Path cache = work.resolve("remap-cache");
         Run run = run(fetcher, mod.toString(), "-a", "1.0", "-b", "1.1", "--fabric",
-                "--cache-dir", work.resolve("remap-cache").toString(), "--dry-run");
+                "--cache-dir", cache.toString());
 
         assertEquals(ExitCodes.OK, run.exitCode(), run.err());
         assertTrue(run.out().contains("映射      : auto -> intermediary"), run.out());
         assertTrue(run.out().contains("需 remap mapped-intermediary"), run.out());
-        assertTrue(run.out().contains("仅库层结论"), run.out());
-        assertTrue(run.err().contains("尚未实现 remapping 引擎"), run.err());
+        assertTrue(run.out().contains("结论含 Minecraft 层"), run.out());
+        assertFalse(run.err().contains("尚未实现 remapping 引擎"), run.err());
+
+        // 关键断言：缓存里出现了 remap 产物，而且类名按目标命名空间改写过了
+        List<Path> products;
+        try (var walk = Files.walk(cache)) {
+            products = walk.filter(p -> p.getFileName().toString().contains("mapped-intermediary")).toList();
+        }
+        assertFalse(products.isEmpty(), "应当产出带 mapped-intermediary 变体的 client.jar");
+        for (Path product : products) {
+            List<String> entries = zipEntries(product);
+            assertTrue(entries.contains("net/minecraft/class_310.class"),
+                    product.getFileName() + " 里应当有 intermediary 名，实际: " + entries);
+            assertFalse(entries.contains(obf + ".class"),
+                    product.getFileName() + " 里不该还有混淆名，实际: " + entries);
+        }
+    }
+
+    /**
+     * 造一个只含单个类的 JAR。
+     *
+     * <p>用 ASM 生成<b>合法</b>的 class 文件：tiny-remapper 要把 classpath 上的每个类都解析一遍，
+     * 喂假数据会在分析阶段就炸掉。类里带一个引用自身的字段，这样重命名既能改类名、也能改引用。</p>
+     */
+    private static byte[] singleClassJar(String internalName) throws IOException {
+        byte[] data = validClass(internalName);
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+            zip.putNextEntry(new ZipEntry(internalName + ".class"));
+            zip.write(data);
+            zip.closeEntry();
+        }
+        return buffer.toByteArray();
+    }
+
+    /** 生成一个最小的合法类：{@code public class X { public X field; }}。 */
+    private static byte[] validClass(String internalName) {
+        org.objectweb.asm.ClassWriter writer = new org.objectweb.asm.ClassWriter(0);
+        writer.visit(org.objectweb.asm.Opcodes.V17, org.objectweb.asm.Opcodes.ACC_PUBLIC,
+                internalName, null, "java/lang/Object", null);
+        writer.visitField(org.objectweb.asm.Opcodes.ACC_PUBLIC, "self", "L" + internalName + ";", null, null)
+                .visitEnd();
+        org.objectweb.asm.MethodVisitor ctor = writer.visitMethod(
+                org.objectweb.asm.Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        ctor.visitCode();
+        ctor.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0);
+        ctor.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        ctor.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        ctor.visitMaxs(1, 1);
+        ctor.visitEnd();
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+
+    /** 造一个 Fabric 风格的 intermediary 映射 JAR（内含 mappings/mappings.tiny）。 */
+    private static byte[] intermediaryMappingJar(String tiny) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+            zip.putNextEntry(new ZipEntry("mappings/mappings.tiny"));
+            zip.write(tiny.getBytes(UTF_8));
+            zip.closeEntry();
+        }
+        return buffer.toByteArray();
+    }
+
+    private static List<String> zipEntries(Path jar) throws IOException {
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(jar.toFile())) {
+            List<String> names = new ArrayList<>();
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                names.add(entries.nextElement().getName());
+            }
+            return names;
+        }
     }
 
     @Test

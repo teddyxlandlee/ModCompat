@@ -64,17 +64,16 @@ class MappingsDecisionTest {
     }
 
     @Test
-    @DisplayName("1.x + Fabric mod + --fabric：需要 official -> intermediary，本版本降级为只比库层")
+    @DisplayName("1.x + Fabric mod + --fabric：对齐到 intermediary 且真的会 remap，结论含 MC 层")
     void intermediaryModWithFabricNeedsRemap() {
         MappingsDecision decision = auto("1.21.1", "1.21.4", true, false, NamespaceKind.INTERMEDIARY);
 
         assertEquals(MinecraftNamespace.INTERMEDIARY, decision.targetNamespace());
         assertTrue(decision.remapNeeded());
-        assertFalse(decision.mcLayerConclusive());
-        assertTrue(decision.degraded());
+        assertTrue(decision.mcLayerConclusive(), "remapping 引擎已接入，不需要降级");
+        assertFalse(decision.degraded());
         assertEquals(MappingsDecision.INTERMEDIARY_VARIANT, decision.variantName());
-        assertTrue(decision.warnings().stream().anyMatch(w -> w.contains("尚未实现 remapping 引擎")),
-                decision.warnings().toString());
+        assertTrue(decision.warnings().isEmpty(), decision.warnings().toString());
         assertFalse(decision.loaderHeuristic(),
                 "--fabric + intermediary mod 是正常组合，不该报“从 loader 推断”");
     }
@@ -261,11 +260,12 @@ class MappingsDecisionTest {
 
         List<Resource> tagged = decision.tag(resources);
 
-        assertEquals(MappingsDecision.INTERMEDIARY_VARIANT, tagged.get(0).variant());
+        assertEquals(MappingsDecision.INTERMEDIARY_VARIANT, tagged.get(0).variant(),
+                "官方 client.jar 是混淆产物，需要 remap");
         assertNull(tagged.get(1).variant(), "gson 不承载 Minecraft 代码");
         assertNull(tagged.get(2).variant(), "Fabric Loader 的库不承载 Minecraft 代码");
-        assertEquals(MappingsDecision.INTERMEDIARY_VARIANT, tagged.get(3).variant(),
-                "NeoForge universal JAR 的字节码用 Mojang 官方名");
+        assertNull(tagged.get(3).variant(),
+                "NeoForge universal JAR 已经是 Mojang 官方名，remap 它是白跑");
         assertNull(tagged.get(4).variant(), "universal-api 是普通库");
         // 基础坐标不变：同坐标过滤必须仍然有效
         for (int i = 0; i < resources.size(); i++) {
@@ -306,7 +306,7 @@ class MappingsDecisionTest {
         assertTrue(remap.startsWith("auto -> intermediary"), remap);
         assertTrue(remap.contains("mod: intermediary"), remap);
         assertTrue(remap.contains("需 remap mapped-intermediary"), remap);
-        assertTrue(remap.contains("仅库层结论"), remap);
+        assertTrue(remap.contains("结论含 Minecraft 层"), remap);
 
         String aligned = auto("1.21.1", "1.21.4", true, false, NamespaceKind.MOJANG).describe();
         assertTrue(aligned.contains("无需 remap"), aligned);
