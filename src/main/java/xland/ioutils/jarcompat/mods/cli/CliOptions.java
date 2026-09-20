@@ -22,6 +22,7 @@ import xland.ioutils.jarcompat.api.ReportFormat;
  * @param fabricOverrideB  环境 B 的 Fabric Loader 版本覆盖（可为 {@code null}）
  * @param neoForgeOverrideA 环境 A 的 NeoForge 版本覆盖（可为 {@code null}）
  * @param neoForgeOverrideB 环境 B 的 NeoForge 版本覆盖（可为 {@code null}）
+ * @param mappings         命名空间策略（默认 {@link MappingsMode#AUTO}）
  * @param cacheDir         JAR 下载缓存目录
  * @param format           报告格式
  * @param output           报告输出文件（可为 {@code null}）
@@ -43,6 +44,7 @@ public record CliOptions(
         @Nullable String fabricOverrideB,
         @Nullable String neoForgeOverrideA,
         @Nullable String neoForgeOverrideB,
+        MappingsMode mappings,
         Path cacheDir,
         ReportFormat format,
         @Nullable Path output,
@@ -57,6 +59,7 @@ public record CliOptions(
     /** 非空分量的尽早校验：这些值一旦为 {@code null}，会在很远的地方才炸开。 */
     public CliOptions {
         Objects.requireNonNull(program, "program");
+        Objects.requireNonNull(mappings, "mappings");
         Objects.requireNonNull(cacheDir, "cacheDir");
         Objects.requireNonNull(format, "format");
         Objects.requireNonNull(reachability, "reachability");

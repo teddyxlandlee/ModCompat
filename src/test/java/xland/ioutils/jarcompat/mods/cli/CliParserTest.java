@@ -126,6 +126,31 @@ class CliParserTest {
     }
 
     @Test
+    @DisplayName("--mappings 的取值与别名；默认 auto")
+    void parsesMappingsMode() {
+        assertEquals(MappingsMode.AUTO, CliParser.parse(new String[] {"mymod.jar", "-a", "1.21.1", "-b", "1.21.4"})
+                .mappings(), "默认应为 auto");
+        assertEquals(MappingsMode.MOJANG, CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings", "mojang"}).mappings());
+        assertEquals(MappingsMode.MOJANG, CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings=official"}).mappings(),
+                "official 是 mojang 的别名");
+        assertEquals(MappingsMode.INTERMEDIARY, CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings", "Intermediary"}).mappings(),
+                "取值大小写不敏感");
+        assertEquals(MappingsMode.NONE, CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings", "none"}).mappings());
+        assertEquals(MappingsMode.INTERMEDIARY, CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings", "tiny"}).mappings(),
+                "tiny 是 intermediary 的别名");
+        assertThrows(UsageException.class, () -> CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings", "yarn"}));
+        assertThrows(UsageException.class, () -> CliParser.parse(new String[] {
+                "mymod.jar", "-a", "1.21.1", "-b", "1.21.4", "--mappings"}));
+        assertTrue(CliParser.usage().contains("--mappings"));
+    }
+
+    @Test
     @DisplayName("--help / --version 优先于必填校验")
     void helpAndVersionSkipValidation() {
         assertTrue(CliParser.parse(new String[] {"--help"}).help());

@@ -4,7 +4,7 @@
 判断该 mod 能否**不重新编译**地在两个环境之间运行；不能时逐条给出确定/潜在的不兼容项、在 mod 中的触发位置，
 以及预计会抛出的运行期错误（如 `NoSuchMethodError` / `NoClassDefFoundError`）。
 
-* 核心 JAR 比较**完全**交给 [`xland.ioutils:JarCompat:0.1.4`](#10-与-jarcompat-的-api-对应关系) 的公共 API
+* 核心 JAR 比较**完全**交给 [`xland.ioutils:JarCompat:0.1.5`](#10-与-jarcompat-的-api-对应关系) 的公共 API
   （`JarCompat.request()` / `JarCompat.check(CheckRequest)` / `CheckReport`）；本项目只负责按 `DEV_GUIDE.md`
   的规则获取 Minecraft / Fabric / NeoForge 元数据、拼装两侧上游库列表、下载 JAR 并呈现报告，**没有自写核心比较器**。
 * 纯静态链接兼容性分析：JarCompat 不加载、不初始化、不执行任何被分析的类。
@@ -42,15 +42,15 @@ CLI → 元数据解析（Mojang / Fabric / NeoForge）→ lib-a / lib-b（同�
 |--------|------------------------------------------------------------------------------------------|
 | JDK    | 25（`build.gradle.kts` 使用 `JavaLanguageVersion.of(25)`）                               |
 | Gradle | 通过 `./gradlew` 使用 9.7.1，无需本机安装                                                |
-| 网络   | 需要访问 Mojang / Fabric / NeoForge 元数据与 Maven 仓库（见 [§9 已知限制](#9-已知限制)） |
+| 网络   | 需要访问 Mojang / Fabric / NeoForge 元数据与 Maven 仓库（见 [§10 已知限制](#10-已知限制)） |
 
 依赖：
 
 ```kotlin
-compileOnly("xland.ioutils:JarCompat:0.1.4")          // 只用它的公共 API 编译
-runtimeOnly("xland.ioutils:JarCompat:0.1.4:all")      // 运行期用自带 ASM 的 fat 构件
+compileOnly("xland.ioutils:JarCompat:0.1.5")          // 只用它的公共 API 编译
+runtimeOnly("xland.ioutils:JarCompat:0.1.5:all")      // 运行期用自带 ASM 的 fat 构件
 implementation("com.grack:nanojson:1.10")             // JSON 解析
-testCompileOnly("xland.ioutils:JarCompat:0.1.4")
+testCompileOnly("xland.ioutils:JarCompat:0.1.5")
 ```
 
 ---
@@ -124,6 +124,12 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 
 两个开关可独立指定、可同时指定、也可都不指定。
 
+### 命名空间（映射）策略
+
+| 参数                                           | 默认   | 说明                                                                       |
+|------------------------------------------------|--------|----------------------------------------------------------------------------|
+| `--mappings <auto\|mojang\|intermediary\|none>` | `auto` | 把两侧上游的 Minecraft 资源对齐到哪个命名空间（`mojang` 的别名：`official`；`intermediary` 的别名：`tiny`） |
+
 ### 其他选项
 
 | 参数                           | 默认                                                                        | 说明                                                                                          |
@@ -160,7 +166,118 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 
 ---
 
-## 7. 输出与退出码
+## 7. 命名空间（映射）处理
+
+### 7.1 为什么需要它
+
+`1.x` 的官方 `client.jar` 里 `net.minecraft.*` 绝大多数是混淆类名（`dwq` 之类）。而 mod 是用
+**映射名**编译的：
+
+| 来源                       | 编译时用的名字                        | 例子                              |
+|----------------------------|---------------------------------------|-----------------------------------|
+| Fabric（`remapJar` 产物）  | intermediary                          | `net/minecraft/class_310`         |
+| NeoForge（1.20.2+）        | Mojang 官方名                         | `net/minecraft/client/Minecraft`  |
+| 未 remap 的 Loom `-dev`    | Yarn                                  | `net/minecraft/client/MinecraftClient` |
+| 原版环境                   | 不用映射（就是混淆名）                | `dwq`                             |
+
+`26.1` 是第一个**不再混淆**的版本，从那以后原版 / Fabric / NeoForge 都不需要映射。
+
+如果两侧的 `net.minecraft.*` 名字不在同一个命名空间里，mod 对它们的引用在两侧都解析不到，
+会被 JarCompat 记成“外部引用”后跳过——于是“没发现问题”变成**假阴性**。
+
+### 7.2 基本规则
+
+* **命名空间是一次比较的全局属性**：两侧所有带 Minecraft 的资源都被对齐到**同一个**目标命名空间，
+  绝不为两侧各自推导一个（那样比较出来的“不兼容”只是命名空间不同，没有意义）。
+* **mod JAR 本身从不 remap**：被对齐的是上游环境。目标命名空间要么等于 mod 自身的命名空间，
+  要么就是“不处理”。
+* **调制解调上不需要用户干预**：mod 的命名空间由**它自己常量池里的类名**判定，与 `--fabric` /
+  `--neoforge` 无关；loader 开关只用来**校验自洽性**。
+* **判不出来就不猜**：无法确定命名空间时不做对齐，并在报告里明确写出
+  `mcLayerConclusive: false`（“结论只覆盖库层”），而不是给出一份看似正常的假阴性报告。
+
+### 7.3 决策表
+
+| 两侧版本          | mod 的命名空间       | `auto` 的结果                                                                  |
+|-------------------|----------------------|--------------------------------------------------------------------------------|
+| 都 `>= 26.x`      | 任意                 | 不处理（原版 JAR 本来就未混淆）；`--mappings intermediary` 是参数错误           |
+| 都 `1.x`          | Mojang 官方名        | 对齐到 `mojang`（NeoForge 的 universal JAR 本来就在这个空间，无需 remap）       |
+| 都 `1.x`          | intermediary         | 唯一启用的 loader 决定目标命名空间；两个 loader 同时启用时**拒绝猜测**，只比库层 |
+| 都 `1.x`          | 认不出来             | 不做对齐，只比库层，并提示可能是未 remap 的工具链产物                          |
+| 跨代（`1.x` ↔ `>=26.x`） | Mojang 官方名 | 对齐到 `mojang`（唯一的两侧共有命名空间），比较照常进行                        |
+| 跨代              | intermediary         | 无法建立映射链：`>= 26.x` 侧没有 intermediary 文件，只比库层                    |
+
+显式 `--mappings` 的语义：
+
+* `mojang` — 在 `>= 26.x` 上是**恒等操作**（短路，不启动 remapper）；在 `1.x` 上把上游对齐到官方名。
+* `intermediary` — 只对 `>= 26.1` 有意义。两侧都是 `1.x` 时直接**报参数错误**（退出码 1）；
+  跨代时降级为只比库层并给出说明。
+* `none` — 显式降级：原样使用官方 JAR，结论只覆盖库层与 JAR 中稳定的具名类。
+
+`auto` 的“自洽性”检查：mod 是 intermediary 却只启用了 `--neoforge`（运行时是 `mojang`）时，
+目标命名空间虽然可从 loader 推断，但会额外提醒这是推断结果；同时启用 `--fabric --neoforge`
+则不猜，直接降级。
+
+### 7.4 判定是怎么做的
+
+`ModNamespaceDetector` 只读 mod JAR 自己的常量池（不触网、不解压整个 JAR）：
+
+| 信号                                              | 结论           |
+|---------------------------------------------------|----------------|
+| 出现 `net/minecraft/class_*`                      | `intermediary` |
+| 出现**不在混淆保留名单里**的可读 `net/minecraft/*` | `mojang`（含 Yarn 等其它具名映射） |
+| 其余                                              | `unknown`      |
+
+**为什么用排除法而不是地标类名清单**：混淆并不会把 `net.minecraft` 下的名字全部打乱——启动器、
+数据生成器、JFR 事件类必须保持稳定名字。实测混淆的 `1.21.1 client.jar` 保留了 **26 个**可读类名
+（`client.main.Main`、`data.Main`、`obfuscate.DontObfuscate`、`server.Main|MinecraftServer`、
+`util.profiling.jfr.event.*`，含内部类）。第一版实现用 `net/minecraft/client/Minecraft` 之类的
+地标清单判断，结果**把混淆的官方 client.jar 判成了 MOJANG**。而用“可读名字的数量”同样分不开：
+混淆产物 26 个，真实的 Yarn 映射 Fabric API 小模块只有 40 个左右，区间是重叠的。
+
+所以判据是：把混淆器**必然**保留的那几个包挖掉之后，剩下的可读名不可能是混淆名。实测：
+
+| JAR                                                     | 判定           | 证据数 |
+|---------------------------------------------------------|----------------|--------|
+| `1.20.1 / 1.21.1 / 1.21.10 client.jar`（混淆）           | `unknown`      | 0      |
+| loom 的 `minecraft-merged-intermediary`（1.20.2 / 1.21.9） | `intermediary` | 0（`class_*` 命中 7496 / 9895） |
+| `26.1.1 / 26.3 client.jar`（未混淆）                     | `mojang`       | 9840 / 10341 |
+| `neoforge-21.1.234-universal.jar`                        | `mojang`       | 1016   |
+| `fabric-loader-0.19.5.jar`                               | `intermediary` | —      |
+| `gson-2.8.9.jar`                                         | `unknown`      | 0（无 MC 引用） |
+
+### 7.5 资源身份：`coords` + `variant`
+
+资源身份拆成两层，因为 `mapped-mojang` 与 `mapped-intermediary` **确实是两份不同的产物**，
+但它们又是同一份原始构件的两种加工结果：
+
+* `coords`（基础身份）——例如 `com.mojang:minecraft:1.21.1`。DEV_GUIDE §2 的“同坐标过滤”
+  仍然只按它比较，否则同一份 `client.jar` 会因为两侧命名空间不同而被当成两个不同资源。
+* `variant`（变体）——`mapped-mojang` / `mapped-intermediary`，参与**缓存键**与报告，不参与过滤。
+  只有真正承载 Minecraft 代码的资源才有变体：官方 `client.jar` 与 NeoForge 的 `:universal` JAR；
+  纯库（gson、netty）与 Fabric Loader 的库不带变体。
+  `variant` 表达的是**目标命名空间**（这份构件应当处于哪个空间），因此即使当前版本还没执行 remap，
+  ”需要 remap“时它也会出现在报告里——缓存键因此天然按命名空间分开（`client.jar.mapped-mojang`
+  与 `client.jar.mapped-intermediary` 不会互相覆盖），等 remapper 接入后不需要改缓存格式。
+  反过来，**不需要 remap 时不会打任何变体**：那时两侧的官方 JAR 本来就在 mod 的命名空间里，
+  打上 `mapped-*` 只会让人误以为改写过字节码，也会白占一份缓存。
+
+JSON 报告里两侧环境各带三个逐位对应的数组：`coords`、`variants`（无变体为 `null`）、`displayNames`。
+
+### 7.6 `--dry-run` 与当前版本的边界
+
+`--dry-run` 会把命名空间决策一并打印/输出（`mappings` 对象），便于在下载几百 MB 之前确认目标命名空间。
+
+> **当前版本的 remapping 引擎尚未接入。** 当决策结果是“需要 remap”时，程序会在 stderr 明确警告
+> （`本版本尚未实现 remapping 引擎`），并在报告的 `mappings` 段里置 `degraded: true` /
+> `mcLayerConclusive: false`，文本报告里则多一行 `结论范围: 仅库层（Minecraft 层未对齐，不可信）`。
+> 也就是说，**原先那条“原版 JAR 是混淆产物、结论只覆盖库层”的限制并没有消失，只是从一句笼统的说明
+> 变成了一个逐次运行、可检查的判定结果**：什么时候受影响、为什么受影响、该加哪个参数，都会在报告里
+> 写清楚。接入 remapper 之后，同一套判定会自动变成“已完成对齐”，报告字段的含义不变。
+
+---
+
+## 8. 输出与退出码
 
 * 人类可读信息（环境 A/B、启用的 loader 及版本、`lib-a` / `lib-b` 资源数、过滤统计、下载进度、错误信息）输出到
   **stderr**；报告本体输出到 **stdout**，因此 `--format json` 时 stdout 是干净、可直接管道处理的 JSON。
@@ -181,29 +298,33 @@ java -jar build/libs/ModCompat-0.1.0-all.jar mymod.jar -a 1.21.1 -b 1.21.4 --fab
 
 ---
 
-## 8. 项目结构
+## 9. 项目结构
 
 ```text
 src/main/java/xland/ioutils/jarcompat/mods/
 ├── Main.java                     # java -jar 入口
-├── ModCompatApp.java             # 主流程：环境构建 → 过滤 → 下载 → JarCompat.check → 输出
-├── cli/                          # CliParser / CliOptions / UsageException / ExitCodes
-├── core/                         # Resource、MavenCoords（parse + URL 拼接）、LibraryParser、
-│                                 # Fetcher/HttpFetcher、MetaClient、JarCache、Zips、ModCompatException
+├── ModCompatApp.java             # 主流程：命名空间决策 → 环境构建 → 过滤 → 下载 → JarCompat.check → 输出
+├── cli/                          # CliParser / CliOptions / MappingsMode / UsageException / ExitCodes
+├── core/                         # Resource（coords + variant）、MavenCoords（parse + URL 拼接）、
+│                                 # LibraryParser、Fetcher/HttpFetcher、MetaClient、JarCache、Zips、
+│                                 # MinecraftVersion、ModNamespaceDetector、MinecraftLayerProbe、
+│                                 # AsciiSearch、ModCompatException
 ├── meta/                         # MojangMeta、FabricMeta、NeoForgeMeta、NeoForgeVersions
-├── env/                          # EnvironmentBuilder、EnvironmentFilter、BuiltEnvironment、EnvironmentVersions
+├── env/                          # EnvironmentBuilder、EnvironmentFilter、BuiltEnvironment、
+│                                 # EnvironmentVersions、MappingsRequest、MappingsDecision、MinecraftNamespace
 
-src/test/java/...                 # 42 个测试：坐标解析 / URL 拼接 / 库解析 / 版本排序 / 过滤 / CLI /
-                                  # JarCompat JSON 行为 / 离线端到端
+src/test/java/...                 # 81 个测试：坐标解析 / URL 拼接 / 库解析 / 版本排序 / 过滤 / CLI /
+                                  # 命名空间检测 / 决策表 / JarCompat JSON 行为 / 离线端到端
 ```
 
 测试全部离线：`ModCompatAppIntegrationTest` 用假的 `Fetcher` 提供元数据与 JAR，覆盖
 “编译两个版本的库 → 编译 mod → 跑完整流程 → 断言报告与退出码”，以及 Fabric/NeoForge 覆盖版本、
-无意义比较、下载缓存复用、JSON 输出、错误路径等场景。
+无意义比较、下载缓存复用、JSON 输出、命名空间决策（含 remap 降级）、错误路径等场景。
+`ModNamespaceDetectorTest` / `MappingsDecisionTest` 是纯单元测试，不需要网络也不需要 JDK 编译器。
 
 ---
 
-## 9. 已知限制
+## 10. 已知限制
 
 * **需要网络**：Mojang 版本清单/元数据、Fabric 元数据、NeoForge 版本 API 与 installer、以及各 Maven 仓库都必须可访问。
   下载体积不小：一个 MC 版本通常包含 100 个左右库（含各平台 natives），首次运行可能达到数百 MB；
@@ -211,11 +332,22 @@ src/test/java/...                 # 42 个测试：坐标解析 / URL 拼接 / �
 * **元数据没有规则过滤**：`parseLibraries` 按 `DEV_GUIDE.md` 的规则收录 `libraries` 里的全部条目
   （不做 `rules` 的 OS/feature 过滤），因此其它平台的 natives 也会被下载并进入 lib-a/lib-b；
   它们不会与 mod 的引用冲突，只是增加下载量。
-* **原版 JAR 是混淆产物**：`versionMeta.downloads.client.url` 指向的官方 client.jar 中 `net.minecraft.*`
-  绝大多数是混淆类名；如果 mod 是用 mappings（Yarn / intermediary / Mojang 官方名）编译的，
-  它对这些类的引用在两侧都解析不到，会被 JarCompat 记为“外部（未提供）引用”并跳过。
-  本工具按 `DEV_GUIDE.md` 规定使用原版 JAR，不做 remap；因此结论主要覆盖
-  **库层面**（gson、guava、netty、log4j、asm……）与 JAR 中稳定的具名类。
+* **remapping 引擎尚未接入（当前版本最大的限制）**：命名空间决策、资源变体、缓存键与报告字段都已就位
+  （见 [§7](#7-命名空间映射处理)），但真正改写字节码的那一步还没做。官方 `client.jar` 在 `1.x` 上仍然是
+  混淆产物，因此当决策结果是“需要 remap”时：
+  * 程序在 stderr 明确警告 `本版本尚未实现 remapping 引擎`；
+  * 报告的 `mappings` 段里 `degraded: true`、`mcLayerConclusive: false`；
+  * mod 对 `net.minecraft.*` 的引用在两侧都解析不到，会被 JarCompat 记为“外部（未提供）引用”并跳过，
+    **Minecraft 层的“未发现问题”是假阴性**，只应参考库层（gson、guava、netty、log4j、asm……）。
+
+  决策结果为“无需 remap”时（`>= 26.x`、mod 本来就用官方名、或 mod 根本没有 MC 引用）不受影响，
+  `mcLayerConclusive` 为 `true`。
+* **命名空间检测的证据下限**：`ModNamespaceDetector` 用“可读类名 ∈ 混淆保留名单之外”作证据，
+  阈值 8 条（见 §7.4）。只引用了个位数 Minecraft 类的极小 mod 会判成 `unknown`，此时程序只比库层
+  并给出提示；用 `--mappings mojang` / `--mappings intermediary` 可以显式覆盖。
+* **不识别 Yarn 名与 Mojang 名的区别**：两者都是“具名映射”，都会被判成 `mojang` 并按同一个命名空间
+  处理。这对本工具是**正确**的（它们与上游官方名的对应关系是同一种），但报告里不会区分
+  `net/minecraft/client/MinecraftClient`（Yarn）与 `net/minecraft/client/Minecraft`（Mojang）。
 * **只检查静态链接兼容性**：反射（`Class.forName` / `Method.invoke`）、`ServiceLoader`、动态代理、JNI、
   资源加载、运行期生成/增强字节码都不在覆盖范围内；行为兼容性（语义变化、配置格式）也不检查。
 * **可达性默认 `all`**：mod 通常没有 `Main-Class`，JarCompat 的 `entry` 模式无法确定入口，会把所有引用降级为 WARN。
@@ -229,35 +361,39 @@ src/test/java/...                 # 42 个测试：坐标解析 / URL 拼接 / �
   （历史说明：0.1.3 的这两个方法因为 nanojson `JsonStringWriter` 未覆写 `toString()` 而返回对象字符串，
   0.1.4 已修复为 `json.done()`；`JarCompatJsonTest` 就是这条行为的回归防线。）
 * **JarCompat 版本显示**：`JarCompat.TOOL_VERSION` 读的是包清单里的 `Implementation-Version`，
-  shadow fat JAR 会丢掉它（退化成 `0.1.0`），所以 `--version` 显示的是本项目固定的常量 `0.1.4`。
+  shadow fat JAR 会丢掉它（退化成 `0.1.0`），所以 `--version` 显示的是本项目固定的常量 `0.1.5`。
 * **缓存不做校验和校验**：缓存命中只检查文件存在且是可读 ZIP；没有比对 sha1。
   若要强制重新下载，删除 `--cache-dir` 下对应文件即可。
 
 ---
 
-## 10. 与 JarCompat 的 API 对应关系
+## 11. 与 JarCompat 的 API 对应关系
 
-| ModCompat                   | JarCompat 0.1.4                                                                                         |
+| ModCompat                   | JarCompat 0.1.5                                                                                         |
 |-----------------------------|---------------------------------------------------------------------------------------------------------|
 | `ModCompatApp.check(...)`   | `JarCompat.request()...build()` → `JarCompat.check(CheckRequest)`                                       |
 | `CliOptions.format()`       | `ReportFormat.TEXT` / `ReportFormat.JSON`                                                               |
 | `CliOptions.reachability()` | `ReachabilityScope.ALL`（默认）/ `ENTRY`                                                                |
+| `CliOptions.mappings()`     | 本工具自己的概念（`MappingsMode`），不来自 JarCompat；判定结果只影响传给 JarCompat 的 JAR 列表与报告字段 |
+| `MappingsDecision`          | 纯本工具逻辑：`modNamespace`（自身检测）× 版本代际 × loader → `targetNamespace` / `remapNeeded` / `mcLayerConclusive` |
+| `MinecraftLayerProbe`       | 兜底断言：一侧提供了 `net/minecraft/**` 而另一侧没有时，提醒 Minecraft 层结论是盲的                     |
 | `CheckReport` 的结论与计数  | `verdict()` / `errorCount()` / `warningCount()` / `compatibleReferenceCount()` / `errorsByLibBJar()` 等 |
 | `--format text` 的报告      | `CheckReport.toText()`（`JarCompat.render(report, TEXT)`）                                              |
 | `--format json` 的报告      | `CheckReport.toJson()`（即 `JarCompat.render(report, JSON)`）的原样嵌入，不做字段级改写                 |
 
 ---
 
-## 11. 示例输出（真实运行，节选）
+## 12. 示例输出（真实运行，节选）
 
 下面是把一个调用 `org.joml.Matrix4f.set3x3(Matrix4f)`（joml 1.10.5 有、1.10.8 已移除）的 mod
 放在 `1.21.1 + Fabric` 与 `1.21.4 + Fabric` 之间比较的真实结果：
 
 ```text
-ModCompat 0.1.0 — Minecraft mod 双环境兼容性比较（JarCompat 0.1.4）
+ModCompat 0.1.0 — Minecraft mod 双环境兼容性比较（JarCompat 0.1.5）
 mod JAR   : /path/to/demo-mod.jar
 环境 A    : Minecraft 1.21.1 + Fabric Loader 0.19.5
 环境 B    : Minecraft 1.21.4 + Fabric Loader 0.19.5
+映射      : auto -> intermediary（mod: intermediary，需 remap mapped-intermediary；仅库层结论）
 缓存目录  : /home/user/.cache/modcompat
 lib-a     : 106 个上游资源 -> 保留 33 个（过滤掉另一侧同坐标 73 个，本侧重复坐标 0 个）
 lib-b     : 122 个上游资源 -> 保留 49 个（过滤掉另一侧同坐标 73 个，本侧重复坐标 0 个）
@@ -305,10 +441,25 @@ JarCompat — JAR Binary Compatibility Checker
 {
   "tool": "ModCompat",
   "toolVersion": "0.1.0",
-  "jarCompatVersion": "0.1.4",
+  "jarCompatVersion": "0.1.5",
   "program": "/path/to/demo-mod.jar",
   "cacheDir": "/path/to/cache",
   "reachability": "ALL",
+  "mappings": {
+    "mode": "auto",
+    "modNamespace": "intermediary",
+    "modNamespaceDetail": "intermediary（命中 214 个 net/minecraft/class_* 类名）",
+    "targetNamespace": "intermediary",
+    "remapNeeded": true,
+    "variant": "mapped-intermediary",
+    "degraded": true,
+    "loaderHeuristic": false,
+    "mcLayerConclusive": false,
+    "warnings": ["本版本尚未实现 remapping 引擎：两侧上游资源将保持官方（1.x 上为混淆名）原名，Minecraft 层的结论不可信，只应参考库层"],
+    "notes": ["mod 是 intermediary，唯一启用的 loader 是 --fabric：原版 JAR 需要反混淆后重新映射到 intermediary"],
+    "minecraftClassesA": 8269,
+    "minecraftClassesB": 8312
+  },
   "environmentA": {
     "minecraft": "1.21.1",
     "fabricLoader": "0.19.5",
@@ -316,11 +467,14 @@ JarCompat — JAR Binary Compatibility Checker
     "resourceCount": 33,
     "removedSharedWithOtherSide": 73,
     "removedDuplicates": 0,
-    "coords": ["com.mojang:minecraft:1.21.1", "..."]
+    "coords": ["com.mojang:minecraft:1.21.1", "..."],
+    "variants": ["mapped-intermediary", null],
+    "displayNames": ["com.mojang:minecraft:1.21.1 [mapped-intermediary]", "..."]
   },
   "environmentB": { "minecraft": "1.21.4", "fabricLoader": "0.19.5", "neoForge": null,
                     "resourceCount": 49, "removedSharedWithOtherSide": 73,
-                    "removedDuplicates": 0, "coords": ["..."] },
+                    "removedDuplicates": 0, "coords": ["..."],
+                    "variants": ["..."], "displayNames": ["..."] },
   "report": {
     "tool": "JarCompat",
     "formatVersion": 1,
@@ -388,13 +542,29 @@ JarCompat — JAR Binary Compatibility Checker
 
 ---
 
-## 12. 验证情况
+## 13. 验证情况
 
-* `./gradlew test`：**42 个测试全部通过**，且全部离线（用假的 `Fetcher`），不访问任何网络。
+* `./gradlew test`：**81 个测试全部通过**，且全部离线（用假的 `Fetcher`），不访问任何网络。
 * 离线端到端测试：用 `javax.tools.JavaCompiler` 现场编译“两个版本的库 + 针对 A 版编译的 mod”，
   跑完整流程并断言 `NoSuchMethodError` 结论、退出码、缓存复用、JSON 结构（含 `report` 来自 JarCompat 的
-  `kindLabel` 等字段）、无意义比较、错误路径等；`JarCompatJsonTest` 单独守住 `toJson()` 返回合法 JSON 这条依赖行为。
+  `kindLabel` 等字段）、无意义比较、命名空间决策（含 remap 降级与 `--mappings` 非法取值）、错误路径等；
+  `JarCompatJsonTest` 单独守住 `toJson()` 返回合法 JSON 这条依赖行为。
 * 真实数据验证：`1.21.1 + Fabric 0.19.5` vs `1.21.4 + Fabric 0.19.5` 首次运行下载 82 个构件
   （约 165 MB；两侧同坐标的 73 个构件被过滤，不产生下载），`lib-a` 32239 个类 / `lib-b` 35515 个类，
   比较耗时约 2.3 s；对调用被移除 API 的 mod 报出确定不兼容（`NoSuchMethodError`），
   `--format json` 的输出可被 `python3 -m json.tool` 正常解析，`--fail-on-error` 返回退出码 2。
+* 命名空间检测对着**本机 Gradle 缓存里的真实构件**校准过（不下载任何东西，只读已有 JAR；
+  这些数字是 §7.4 表里那些实测值的来源）：
+
+  | 构件                                                    | 期望           | 实测           | 证据数 |
+  |---------------------------------------------------------|----------------|----------------|--------|
+  | `minecraft_1.20.1 / 1.21.1 / 1.21.10_client.jar`         | `unknown`      | `unknown`      | 0      |
+  | loom `minecraft-merged-intermediary`（1.20.2 / 1.21.9）  | `intermediary` | `intermediary` | `class_*` 命中 7496 / 9895 |
+  | `minecraft_26.1.1 / 26.3_client.jar`                     | `mojang`       | `mojang`       | 9840 / 10341 |
+  | `neoforge-21.1.234 / 26.3.0.1-beta-universal.jar`        | `mojang`       | `mojang`       | 1016 / 1215 |
+  | `fabric-loader-0.19.5.jar`                               | `intermediary` | `intermediary` | —      |
+  | `gson-2.8.9.jar`                                         | `unknown`      | `unknown`      | 0（无 MC 引用） |
+
+  正是这轮校准推翻了最初“命中地标类名即判 MOJANG”的写法——它把**混淆的** 1.21.1 `client.jar`
+  判成了 `mojang`（`ModNamespaceDetectorTest#obfuscatedBootstrapNamesAreNotEvidence` 是它的回归防线）。
+  扫描一整份未混淆的 `client.jar`（约 1 万个类）耗时约 0.5 s，mod JAR 通常只需几十毫秒。

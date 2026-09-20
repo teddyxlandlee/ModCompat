@@ -24,6 +24,10 @@ import xland.ioutils.jarcompat.mods.meta.NeoForgeMeta;
  * </pre>
  *
  * <p>未指定 override 时使用该 loader 在该侧 Minecraft 版本下的最新版本。</p>
+ *
+ * <p>构建完成的资源会按 {@link MappingsDecision} 打上命名空间变体（只有真正承载 Minecraft 代码的
+ * 资源才有变体，见 {@link MappingsDecision#tag(List)}）。变体只改写 {@link Resource#variant()}，
+ * 基础坐标（DEV_GUIDE §2 用来做同坐标过滤的 {@code coords}）保持不变。</p>
  */
 public final class EnvironmentBuilder {
 
@@ -48,9 +52,12 @@ public final class EnvironmentBuilder {
      * @param withNeoForge     是否启用 NeoForge
      * @param fabricOverride   指定的 Fabric Loader 版本，可为 {@code null}
      * @param neoForgeOverride 指定的 NeoForge 版本，可为 {@code null}
+     * @param mappings         本次比较的命名空间决策
      */
     public BuiltEnvironment build(String label, String mcVersion, boolean withFabric, boolean withNeoForge,
-                                  @Nullable String fabricOverride, @Nullable String neoForgeOverride) {
+                                  @Nullable String fabricOverride, @Nullable String neoForgeOverride,
+                                  MappingsDecision mappings) {
+        Objects.requireNonNull(mappings, "mappings");
         try {
             JsonObject versionMeta = mojang.versionMeta(mcVersion);
             List<Resource> resources = new ArrayList<>();
@@ -74,7 +81,8 @@ public final class EnvironmentBuilder {
                 byte[] installer = client.bytes(neoForge.installerUrl(neoVersion));
                 resources.addAll(neoForge.libraries(installer));
             }
-            return new BuiltEnvironment(new EnvironmentVersions(mcVersion, fabricVersion, neoVersion), resources);
+            return new BuiltEnvironment(new EnvironmentVersions(mcVersion, fabricVersion, neoVersion),
+                    mappings.tag(resources));
         } catch (ModCompatException e) {
             throw new ModCompatException("环境 " + label + "（Minecraft " + mcVersion + "）: " + e.getMessage(), e);
         }

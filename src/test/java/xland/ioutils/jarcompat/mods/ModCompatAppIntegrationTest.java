@@ -4,6 +4,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -35,6 +36,8 @@ import org.jspecify.annotations.Nullable;
 import xland.ioutils.jarcompat.mods.cli.ExitCodes;
 import xland.ioutils.jarcompat.mods.core.Fetcher;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
+import xland.ioutils.jarcompat.mods.core.ModNamespaceDetector;
+import xland.ioutils.jarcompat.mods.core.ModNamespaceDetector.NamespaceKind;
 import xland.ioutils.jarcompat.mods.meta.FabricMeta;
 import xland.ioutils.jarcompat.mods.meta.MojangMeta;
 import xland.ioutils.jarcompat.mods.meta.NeoForgeMeta;
@@ -298,6 +301,128 @@ class ModCompatAppIntegrationTest {
         JsonObject item = report.getArray("incompatibilities").getObject(0);
         assertNotNull(item.getString("kindLabel"), run.out());
         assertEquals("ERROR", item.getString("severity"));
+    }
+
+    @Test
+    @DisplayName("端到端：命名空间决策随环境一起进入 JSON，且没有 Minecraft 引用时结论完整")
+    void emitsMappingsDecision() throws Exception {
+        Path mod = compileJar("map-mod", "mod.ExampleMod",
+                "package mod; public class ExampleMod { public static void main(String[] args) { } }", null);
+
+        MapFetcher fetcher = new MapFetcher()
+                .put(MojangMeta.VERSION_MANIFEST_URL, manifest("1.0", "2.0"))
+                .put("https://fake/meta/1.0.json", versionMeta("1.0", "https://fake/client-1.0.jar"))
+                .put("https://fake/meta/2.0.json", versionMeta("2.0", "https://fake/client-2.0.jar"))
+                .put("https://fake/client-1.0.jar", new byte[] {1})
+                .put("https://fake/client-2.0.jar", new byte[] {1});
+
+        Run run = run(fetcher, mod.toString(), "-a", "1.0", "-b", "2.0",
+                "--cache-dir", work.resolve("map-cache").toString(), "--dry-run", "--format", "json");
+
+        assertEquals(ExitCodes.OK, run.exitCode(), run.err());
+        JsonObject mappings = JsonParser.object().from(run.out()).getObject("mappings");
+        assertEquals("auto", mappings.getString("mode"));
+        assertEquals("unknown", mappings.getString("modNamespace"), "mod 里没有 Minecraft 类名");
+        assertNull(mappings.getString("targetNamespace"));
+        assertEquals(false, mappings.getBoolean("remapNeeded"));
+        assertEquals(false, mappings.getBoolean("degraded"));
+        assertTrue(mappings.getBoolean("mcLayerConclusive"), run.out());
+        assertTrue(mappings.getArray("warnings").isEmpty(), run.out());
+    }
+
+    @Test
+    @DisplayName("端到端：intermediary mod + --fabric 触发 remap 降级，并给出明确警告")
+    void degradesWhenRemapIsRequired() throws Exception {
+        Path mod = compileJar("intermediary-mod", "mod.ExampleMod", """
+                package mod;
+                public class ExampleMod {
+                    public static final String[] CLASSES = {
+                            "net/minecraft/class_310", "net/minecraft/class_2561",
+                            "net/minecraft/class_2960", "net/minecraft/class_2378",
+                            "net/minecraft/class_1234", "net/minecraft/class_5678"};
+                    public static void main(String[] args) { }
+                }
+                """, null);
+
+        // 先确认测试 fixture 真的会被判成 intermediary，否则后面的断言没有意义
+        assertEquals(NamespaceKind.INTERMEDIARY, ModNamespaceDetector.detect(mod).namespace(),
+                "测试用的 mod JAR 应当被判成 intermediary");
+
+        MapFetcher fetcher = new MapFetcher()
+                .put(MojangMeta.VERSION_MANIFEST_URL, manifest("1.0", "1.1"))
+                .put("https://fake/meta/1.0.json", versionMeta("1.0", "https://fake/client-1.0.jar"))
+                .put("https://fake/meta/1.1.json", versionMeta("1.1", "https://fake/client-1.1.jar"))
+                .put(fabricLoaderListUrl("1.0"), fabricVersions("0.19.5"))
+                .put(fabricLoaderListUrl("1.1"), fabricVersions("0.19.6"))
+                .put(fabricProfileUrl("1.0", "0.19.5"), fabricProfile("0.19.5"))
+                .put(fabricProfileUrl("1.1", "0.19.6"), fabricProfile("0.19.6"))
+                .put("https://fake/client-1.0.jar", new byte[] {1})
+                .put("https://fake/client-1.1.jar", new byte[] {1});
+
+        Run run = run(fetcher, mod.toString(), "-a", "1.0", "-b", "1.1", "--fabric",
+                "--cache-dir", work.resolve("remap-cache").toString(), "--dry-run");
+
+        assertEquals(ExitCodes.OK, run.exitCode(), run.err());
+        assertTrue(run.out().contains("映射      : auto -> intermediary"), run.out());
+        assertTrue(run.out().contains("需 remap mapped-intermediary"), run.out());
+        assertTrue(run.out().contains("仅库层结论"), run.out());
+        assertTrue(run.err().contains("尚未实现 remapping 引擎"), run.err());
+    }
+
+    @Test
+    @DisplayName("端到端：intermediary mod 但没有 loader 时，提示该加 --fabric / --neoforge")
+    void refusesWithoutLoaderHint() throws Exception {
+        Path mod = compileJar("noloader-mod", "mod.ExampleMod", """
+                package mod;
+                public class ExampleMod {
+                    public static final String[] CLASSES = {
+                            "net/minecraft/class_310", "net/minecraft/class_2561",
+                            "net/minecraft/class_2960", "net/minecraft/class_2378",
+                            "net/minecraft/class_1234", "net/minecraft/class_5678"};
+                    public static void main(String[] args) { }
+                }
+                """, null);
+
+        MapFetcher fetcher = new MapFetcher()
+                .put(MojangMeta.VERSION_MANIFEST_URL, manifest("1.0", "1.1"))
+                .put("https://fake/meta/1.0.json", versionMeta("1.0", "https://fake/client-1.0.jar"))
+                .put("https://fake/meta/1.1.json", versionMeta("1.1", "https://fake/client-1.1.jar"))
+                .put("https://fake/client-1.0.jar", new byte[] {1})
+                .put("https://fake/client-1.1.jar", new byte[] {1});
+
+        Run run = run(fetcher, mod.toString(), "-a", "1.0", "-b", "1.1",
+                "--cache-dir", work.resolve("noloader-cache").toString(), "--dry-run");
+
+        assertEquals(ExitCodes.OK, run.exitCode(), run.err());
+        assertTrue(run.out().contains("映射      : auto -> none"), run.out());
+        assertTrue(run.err().contains("--fabric"), run.err());
+        assertTrue(run.err().contains("--neoforge"), run.err());
+    }
+
+    @Test
+    @DisplayName("端到端：--mappings none 显式降级；--mappings 非法取值返回退出码 1")
+    void explicitMappingsModes() throws Exception {
+        Path mod = compileJar("explicit-mod", "mod.ExampleMod",
+                "package mod; public class ExampleMod { public static void main(String[] args) { } }", null);
+
+        MapFetcher fetcher = new MapFetcher()
+                .put(MojangMeta.VERSION_MANIFEST_URL, manifest("1.0", "1.1"))
+                .put("https://fake/meta/1.0.json", versionMeta("1.0", "https://fake/client-1.0.jar"))
+                .put("https://fake/meta/1.1.json", versionMeta("1.1", "https://fake/client-1.1.jar"))
+                .put("https://fake/client-1.0.jar", new byte[] {1})
+                .put("https://fake/client-1.1.jar", new byte[] {1});
+
+        Run none = run(fetcher, mod.toString(), "-a", "1.0", "-b", "1.1", "--mappings", "none",
+                "--cache-dir", work.resolve("none-cache").toString(), "--dry-run", "--format", "json");
+        assertEquals(ExitCodes.OK, none.exitCode(), none.err());
+        JsonObject mappings = JsonParser.object().from(none.out()).getObject("mappings");
+        assertEquals("none", mappings.getString("mode"));
+        assertEquals(false, mappings.getBoolean("mcLayerConclusive"));
+        assertEquals(true, mappings.getBoolean("degraded"));
+
+        Run invalid = run(fetcher, mod.toString(), "-a", "1.0", "-b", "1.1", "--mappings", "yarn");
+        assertEquals(ExitCodes.USAGE, invalid.exitCode(), invalid.out());
+        assertTrue(invalid.err().contains("--mappings"), invalid.err());
     }
 
     @Test

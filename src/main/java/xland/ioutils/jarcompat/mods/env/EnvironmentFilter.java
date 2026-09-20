@@ -18,6 +18,10 @@ import xland.ioutils.jarcompat.mods.core.Resource;
  * <p>两侧都以“对方未过滤前的完整列表”为基准，因此结果是严格对称的：某个坐标相同于两侧的资源会同时
  * 从 lib-a 和 lib-b 中消失，剩下的就是两侧各自的差异部分。（若按 DEV_GUIDE 伪代码的字面顺序在循环里
  * 就地修改，先处理的一侧会把共有资源删掉，导致后处理的一侧反而保留它们，结果依赖处理顺序。）</p>
+ *
+ * <p>比较的是资源的<b>基础身份</b>（{@link Resource#coords()}），<b>不是</b>命名空间变体：
+ * {@code com.mojang:minecraft:1.21.1} 无论被 remap 成 mojang 还是 intermediary，都还是两侧的
+ * 同一个构件，必须被同等过滤。</p>
  */
 public final class EnvironmentFilter {
 
@@ -57,11 +61,12 @@ public final class EnvironmentFilter {
         int shared = 0;
         int duplicates = 0;
         for (Resource resource : ownResources) {
-            if (otherSideCoords.contains(resource.coords())) {
+            String coords = resource.coords();
+            if (otherSideCoords.contains(coords)) {
                 shared++;
                 continue;
             }
-            if (!seen.add(resource.coords())) {
+            if (!seen.add(coords)) {
                 duplicates++;
                 continue;
             }

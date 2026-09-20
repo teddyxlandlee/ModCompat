@@ -7,8 +7,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
+import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
 import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonParserException;
@@ -29,12 +31,15 @@ import xland.ioutils.jarcompat.mods.core.Fetcher;
 import xland.ioutils.jarcompat.mods.core.HttpFetcher;
 import xland.ioutils.jarcompat.mods.core.JarCache;
 import xland.ioutils.jarcompat.mods.core.MetaClient;
+import xland.ioutils.jarcompat.mods.core.MinecraftLayerProbe;
 import xland.ioutils.jarcompat.mods.core.ModCompatException;
 import xland.ioutils.jarcompat.mods.core.Resource;
 import xland.ioutils.jarcompat.mods.core.Zips;
 import xland.ioutils.jarcompat.mods.env.BuiltEnvironment;
 import xland.ioutils.jarcompat.mods.env.EnvironmentBuilder;
 import xland.ioutils.jarcompat.mods.env.EnvironmentFilter;
+import xland.ioutils.jarcompat.mods.env.MappingsDecision;
+import xland.ioutils.jarcompat.mods.env.MappingsRequest;
 
 /**
  * ModCompat 主流程：解析参数 → 构建两侧环境 → 过滤同坐标资源 → 下载 JAR → 调用 JarCompat → 输出报告。
@@ -143,10 +148,15 @@ public final class ModCompatApp {
             MetaClient client = new MetaClient(fetcher);
             EnvironmentBuilder builder = new EnvironmentBuilder(client);
 
+            // 命名空间决策必须在建环境之前完成：它决定两侧的 MC 资源用哪个变体。
+            // mod JAR 的命名空间只看它自己的常量池，不依赖 loader 参数。
+            MappingsDecision mappings = MappingsDecision.evaluate(
+                    MappingsRequest.detect(options, mcVersionA, mcVersionB, program));
+
             BuiltEnvironment environmentA = builder.build("A", mcVersionA, options.fabric(),
-                    options.neoForge(), options.fabricOverrideA(), options.neoForgeOverrideA());
+                    options.neoForge(), options.fabricOverrideA(), options.neoForgeOverrideA(), mappings);
             BuiltEnvironment environmentB = builder.build("B", mcVersionB, options.fabric(),
-                    options.neoForge(), options.fabricOverrideB(), options.neoForgeOverrideB());
+                    options.neoForge(), options.fabricOverrideB(), options.neoForgeOverrideB(), mappings);
 
             if (environmentA.versions().sameEnvironmentAs(environmentB.versions(), options.fabric(), options.neoForge())) {
                 err.println("无意义的比较: 两侧环境完全相同（" + environmentA.versions()
@@ -162,14 +172,15 @@ public final class ModCompatApp {
                     EnvironmentFilter.coordsOf(environmentA.resources()));
 
             if (options.format() == ReportFormat.JSON) {
-                printEnvironmentHeader(err, environmentA, environmentB, libA, libB);
+                printEnvironmentHeader(err, environmentA, environmentB, libA, libB, mappings);
             } else {
-                printEnvironmentHeader(out, environmentA, environmentB, libA, libB);
+                printEnvironmentHeader(out, environmentA, environmentB, libA, libB, mappings);
             }
+            printMappingsWarnings(mappings);
 
             if (options.dryRun()) {
                 if (options.format() == ReportFormat.JSON) {
-                    out.println(renderDryRunJson(environmentA, environmentB, libA, libB));
+                    out.println(renderDryRunJson(environmentA, environmentB, libA, libB, mappings));
                 } else {
                     printResourceList("lib-a", libA.resources());
                     printResourceList("lib-b", libB.resources());
@@ -191,7 +202,7 @@ public final class ModCompatApp {
                     + cache.reusedCount() + " 个（缓存目录 " + cache.root() + "）");
 
             CheckReport report = check(program, libAPaths, libBPaths, entryMethod);
-            emit(report, environmentA, environmentB, libA, libB);
+            emit(report, environmentA, environmentB, libA, libB, mappings, libAPaths, libBPaths);
             if (report.errorCount() > 0 && options.failOnError()) {
                 return ExitCodes.INCOMPATIBLE;
             }
@@ -234,9 +245,9 @@ public final class ModCompatApp {
         List<Path> paths = new ArrayList<>(resources.size());
         for (Resource resource : resources) {
             try {
-                paths.add(cache.fetch(resource));
+                paths.add(cache.fetch(resource, resource.variant()));
             } catch (IOException e) {
-                throw new ModCompatException("环境 " + side + " 的资源 " + resource.coords()
+                throw new ModCompatException("环境 " + side + " 的资源 " + resource.displayName()
                         + " 下载失败: " + e.getMessage(), e);
             }
         }
@@ -244,12 +255,14 @@ public final class ModCompatApp {
     }
 
     private void printEnvironmentHeader(PrintStream target, BuiltEnvironment a, BuiltEnvironment b,
-                                        EnvironmentFilter.Result libA, EnvironmentFilter.Result libB) {
+                                        EnvironmentFilter.Result libA, EnvironmentFilter.Result libB,
+                                        MappingsDecision mappings) {
         target.println(TOOL_NAME + " " + TOOL_VERSION + " — Minecraft mod 双环境兼容性比较（JarCompat "
                 + JAR_COMPAT_VERSION + "）");
         target.println("mod JAR   : " + options.program().toAbsolutePath());
         target.println("环境 A    : " + a.versions().describe(options.fabric(), options.neoForge()));
         target.println("环境 B    : " + b.versions().describe(options.fabric(), options.neoForge()));
+        target.println("映射      : " + mappings.describe());
         target.println("缓存目录  : " + options.cacheDir().toAbsolutePath());
         target.println("lib-a     : " + describe(libA));
         target.println("lib-b     : " + describe(libB));
@@ -268,31 +281,56 @@ public final class ModCompatApp {
     private void printResourceList(String label, List<Resource> resources) {
         out.println("== " + label + "（" + resources.size() + " 个）==");
         for (Resource resource : resources) {
-            out.println("  - " + resource.coords() + "  <- " + resource.url());
+            out.println("  - " + resource.displayName() + "  <- " + resource.url());
         }
         out.println();
     }
 
+    /** 把命名空间决策的提示写到 stderr（始终不影响 stdout 的报告本身）。 */
+    private void printMappingsWarnings(MappingsDecision mappings) {
+        for (String warning : mappings.warnings()) {
+            err.println("映射提示: " + warning);
+        }
+        if (mappings.loaderHeuristic()) {
+            err.println("映射提示: 目标命名空间是从唯一启用的 loader 推断的，与 mod 自身的命名空间并不一致；"
+                    + "如果不确定该 mod 是在哪个 loader 上构建的，请显式指定 --mappings");
+        }
+    }
+
     /** {@code --dry-run --format json}：只输出两侧环境与资源列表，不含报告。 */
     private String renderDryRunJson(BuiltEnvironment a, BuiltEnvironment b,
-                                    EnvironmentFilter.Result libA, EnvironmentFilter.Result libB) {
+                                    EnvironmentFilter.Result libA, EnvironmentFilter.Result libB,
+                                    MappingsDecision mappings) {
         JsonObject root = new JsonObject();
         root.put("tool", TOOL_NAME);
         root.put("toolVersion", TOOL_VERSION);
         root.put("program", options.program().toAbsolutePath().toString());
         root.put("dryRun", true);
+        root.put("mappings", mappingsJson(mappings, null));
         root.put("environmentA", environmentJson(a, libA));
         root.put("environmentB", environmentJson(b, libB));
         return JsonWriter.indent("  ").string().value(root).done();
     }
 
     private void emit(CheckReport report, BuiltEnvironment a, BuiltEnvironment b,
-                      EnvironmentFilter.Result libA, EnvironmentFilter.Result libB) {
+                      EnvironmentFilter.Result libA, EnvironmentFilter.Result libB,
+                      MappingsDecision mappings, List<Path> libAPaths, List<Path> libBPaths) {
+        // 兜底断言：一侧真的提供了 Minecraft 类、另一侧一个都没有时，Minecraft 层的结论必然是盲的
+        MinecraftLayerProbe.Result mcLayer = MinecraftLayerProbe.probe(libAPaths, libBPaths);
+        for (String warning : mcLayer.warnings()) {
+            err.println("映射提示: " + warning);
+        }
+
         String rendered;
         if (options.format() == ReportFormat.JSON) {
-            rendered = renderJson(report, a, b, libA, libB);
+            rendered = renderJson(report, a, b, libA, libB, mappings, mcLayer);
         } else {
             rendered = report.toText();
+        }
+
+        // 结论含不含 Minecraft 层，是本次比较最需要被看清的一件事
+        if (options.format() != ReportFormat.JSON) {
+            out.println(mcLayerLine(mappings, mcLayer));
         }
 
         if (options.format() == ReportFormat.JSON) {
@@ -332,7 +370,8 @@ public final class ModCompatApp {
      * 因此报告内容与 {@code JarCompat} CLI 的 {@code --format json} 完全一致。</p>
      */
     private String renderJson(CheckReport report, BuiltEnvironment a, BuiltEnvironment b,
-                              EnvironmentFilter.Result libA, EnvironmentFilter.Result libB) {
+                              EnvironmentFilter.Result libA, EnvironmentFilter.Result libB,
+                              MappingsDecision mappings, MinecraftLayerProbe.Result mcLayer) {
         JsonObject root = new JsonObject();
         root.put("tool", TOOL_NAME);
         root.put("toolVersion", TOOL_VERSION);
@@ -340,10 +379,57 @@ public final class ModCompatApp {
         root.put("program", options.program().toAbsolutePath().toString());
         root.put("cacheDir", options.cacheDir().toAbsolutePath().toString());
         root.put("reachability", options.reachability().name());
+        root.put("mappings", mappingsJson(mappings, mcLayer));
         root.put("environmentA", environmentJson(a, libA));
         root.put("environmentB", environmentJson(b, libB));
         root.put("report", parseJarCompatReport(report));
         return JsonWriter.indent("  ").string().value(root).done();
+    }
+
+    /**
+     * 命名空间决策的 JSON 表示。
+     *
+     * <p>{@code mcLayerConclusive} 是这里最要紧的字段：{@code false} 表示报告里的结论只覆盖库层，
+     * Minecraft 层的“未发现问题”可能只是引用没解析到。</p>
+     *
+     * @param mcLayer 兜底探针结果；{@code --dry-run} 时还没有下载资源，传 {@code null}
+     */
+    private static JsonObject mappingsJson(MappingsDecision mappings, MinecraftLayerProbe.@Nullable Result mcLayer) {
+        JsonObject json = new JsonObject();
+        json.put("mode", mappings.requestedMode().label());
+        json.put("modNamespace", mappings.modNamespace().namespace().name().toLowerCase(Locale.ROOT));
+        json.put("modNamespaceDetail", mappings.modNamespace().describe());
+        json.put("targetNamespace", mappings.targetNamespace() == null
+                ? null : mappings.targetNamespace().label());
+        json.put("remapNeeded", mappings.remapNeeded());
+        json.put("variant", mappings.variantName());
+        json.put("degraded", mappings.degraded());
+        json.put("loaderHeuristic", mappings.loaderHeuristic());
+        json.put("mcLayerConclusive", mappings.mcLayerConclusive() && (mcLayer == null || mcLayer.conclusive()));
+        JsonArray warnings = new JsonArray();
+        mappings.warnings().forEach(warnings::add);
+        if (mcLayer != null) {
+            mcLayer.warnings().forEach(warnings::add);
+        }
+        json.put("warnings", warnings);
+        JsonArray notes = new JsonArray();
+        mappings.notes().forEach(notes::add);
+        json.put("notes", notes);
+        if (mcLayer != null) {
+            json.put("minecraftClassesA", mcLayer.classesA());
+            json.put("minecraftClassesB", mcLayer.classesB());
+        }
+        return json;
+    }
+
+    /** 文本报告里的“结论覆盖范围”一行。 */
+    private static String mcLayerLine(MappingsDecision mappings, MinecraftLayerProbe.Result mcLayer) {
+        boolean conclusive = mappings.mcLayerConclusive() && mcLayer.conclusive();
+        StringBuilder sb = new StringBuilder("结论范围: ");
+        sb.append(conclusive ? "库层 + Minecraft 层" : "仅库层（Minecraft 层未对齐，不可信）");
+        sb.append("（Minecraft 类: A 侧 ").append(mcLayer.classesA())
+                .append(" 个，B 侧 ").append(mcLayer.classesB()).append(" 个）");
+        return sb.toString();
     }
 
     /**
@@ -371,6 +457,9 @@ public final class ModCompatApp {
         json.put("removedSharedWithOtherSide", result.removedSharedWithOtherSide());
         json.put("removedDuplicates", result.removedDuplicates());
         json.put("coords", result.resources().stream().map(Resource::coords).toList());
+        // 与 coords 逐位对应：null 表示该资源没有命名空间变体
+        json.put("variants", result.resources().stream().map(Resource::variant).toList());
+        json.put("displayNames", result.resources().stream().map(Resource::displayName).toList());
         return json;
     }
 

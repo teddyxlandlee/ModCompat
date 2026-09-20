@@ -16,7 +16,8 @@ import xland.ioutils.jarcompat.api.ReportFormat;
  * <p>必填：{@code <program>}、{@code -a/--version-a}、{@code -b/--version-b}。
  * 可选开关：{@code --fabric}、{@code --neoforge}（可独立或同时指定）。
  * 可选覆盖：{@code --fabric-override-a/b}、{@code --neoforge-override-a/b}
- * （指定了 override 却没有开启对应 loader 时报错）。</p>
+ * （指定了 override 却没有开启对应 loader 时报错）。
+ * 可选命名空间策略：{@code --mappings auto|mojang|intermediary|none}（见 {@link MappingsMode}）。</p>
  *
  * <p>解析失败一律抛出 {@link UsageException}，由上层转成退出码 1。</p>
  */
@@ -48,6 +49,26 @@ public final class CliParser {
                       --neoforge-override-a <version>  环境 A 的 NeoForge 版本（需 --neoforge）
                       --neoforge-override-b <version>  环境 B 的 NeoForge 版本（需 --neoforge）
 
+                命名空间（映射）策略:
+                      --mappings <auto|mojang|intermediary|none>   默认 auto（mojang 的别名：official）
+
+                  Minecraft 在不同版本下需要不同的命名空间处理，本工具把两侧所有带 Minecraft 的
+                  资源对齐到同一个目标命名空间后再比较（mod JAR 本身从不 remap，被对齐的是上游环境）：
+
+                    >= 26.x  原版 JAR 本来就未混淆，原版 / Fabric / NeoForge 都不需要映射。
+                             auto 的结果就是 none；显式 --mappings mojang 被接受且为恒等操作；
+                             --mappings intermediary 是参数错误（该版本没有 intermediary 文件）。
+                    1.x      原版 JAR 是混淆产物。Fabric mod 用 intermediary，NeoForge mod 用
+                             Mojang 官方名，原版环境两者都不用。
+                             auto 依据 mod JAR 常量池里的类名自行判定，并要求它与已启用的 loader
+                             自洽；判不出来时降级为只比库层并给出说明。
+                    跨代     1.x <-> >= 26.x 只有 mojang 是两侧共有的命名空间，auto 会把 1.x 侧
+                             对齐到 mojang；两侧都不可映射时只比库层。
+
+                  自洽性：mod 的命名空间与已启用的 loader 不一致（例如一个 intermediary 的 mod
+                  却只用 --neoforge 按 mojang 运行时对齐）时 auto 不会猜测：它会从唯一的 loader
+                  推断目标命名空间并额外提醒。两个 loader 同时启用时无名可推，直接降级为只比库层。
+
                 其他选项:
                       --cache-dir <dir>            JAR 下载缓存目录（默认 $MODCOMPAT_CACHE_DIR 或 ~/.cache/modcompat）
                       --format <text|json>         报告格式（默认 text）
@@ -70,6 +91,8 @@ public final class CliParser {
                   modcompat mymod.jar -a 1.21.1 -b 1.21.4
                   modcompat mymod.jar -a 1.21.1 -b 1.21.4 --fabric --neoforge
                   modcompat mymod.jar -a 1.21.1 -b 1.21.4 --neoforge --neoforge-override-b 21.4.100-beta
+                  modcompat mymod.jar -a 1.21.1 -b 1.21.4 --fabric --mappings intermediary
+                  modcompat mymod.jar -a 1.21.4 -b 26.1 --neoforge --mappings mojang
                   modcompat mymod.jar -a 1.21.1 -b 1.21.1 --fabric --fabric-override-b 0.19.5 --format json
                 """;
     }
@@ -137,6 +160,7 @@ public final class CliParser {
                 case "--entry" -> b.entryClass = requireNonBlank(name, value(name, inline, cursor));
                 case "--entry-method" -> b.entryMethod = requireNonBlank(name, value(name, inline, cursor));
                 case "--format" -> b.format = parseFormat(value(name, inline, cursor));
+                case "--mappings" -> b.mappings = MappingsMode.parse(value(name, inline, cursor));
                 case "--reachability" -> b.reachability = parseReachability(value(name, inline, cursor));
                 default -> {
                     if (arg.startsWith("-") && arg.length() > 1) {
@@ -247,6 +271,7 @@ public final class CliParser {
         private @Nullable String fabricOverrideB;
         private @Nullable String neoForgeOverrideA;
         private @Nullable String neoForgeOverrideB;
+        private MappingsMode mappings = MappingsMode.AUTO;
         private @Nullable Path cacheDir;
         private ReportFormat format = ReportFormat.TEXT;
         private @Nullable Path output;
@@ -269,6 +294,7 @@ public final class CliParser {
                     fabricOverrideB,
                     neoForgeOverrideA,
                     neoForgeOverrideB,
+                    mappings,
                     cacheDir != null ? cacheDir : CliOptions.defaultCacheDir(),
                     format,
                     output,
